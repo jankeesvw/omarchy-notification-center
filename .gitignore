@@ -5,3 +5,4 @@
 archive.jsonl
 *.jsonl
 *.local.*
+graphify-out/

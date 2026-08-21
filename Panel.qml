@@ -51,6 +51,8 @@ Panel {
   readonly property string clickAction: setting("clickAction", "Auto")
   readonly property bool showBody: setting("showBody", true)
   readonly property bool showPreview: setting("showPreview", true)
+  readonly property string grouping: setting("grouping", "By app")
+  property bool groupingEnabled: grouping !== "Off"
 
   // How many the panel holds in memory. The archive can be far longer; this is
   // how far back the list scrolls before it stops, and it is a list you scan
@@ -100,6 +102,10 @@ Panel {
   // Whether the search field is up and holding the keyboard. Off by default,
   // and off again the moment the panel closes.
   property bool searching: false
+  // Kept above the delegates so rebuilding after an individual dismissal does
+  // not collapse the group that contained it.
+  property string expandedGroup: ""
+  property int rebuildGeneration: 0
   // Ticks so "4m ago" ages on screen instead of freezing at whatever it said
   // when the panel opened. Only while the panel is open: nothing behind a
   // closed panel is being read.
@@ -270,11 +276,82 @@ Panel {
     for (var i = 0; i < entries.length; i++)
       if (entries[i].key !== key) next.push(entries[i])
     entries = next
-    rebuild()
+    if (!removeRow(String(key))) rebuild()
     // Queued rather than dropped when one is already running: a run of
     // dismissals is exactly how this gets used, and each one is a file the
     // store still has to be told about.
     Quickshell.execDetached(root.storeCommand(["remove", String(key)]))
+  }
+
+  // Update one visible row without clearing the ListModel. In particular this
+  // keeps an expanded group's delegate alive, so deleting one child does not
+  // disturb the ListView's geometry or scroll anchor.
+  function removeRow(key) {
+    for (var i = 0; i < rows.count; i++) {
+      var current = rows.get(i)
+      if (String(current.key) === key && Number(current.groupCount) <= 1) {
+        rows.remove(i)
+        return true
+      }
+      if (Number(current.groupCount) <= 1 || current.groupMembers === "") continue
+
+      var members
+      try {
+        members = JSON.parse(current.groupMembers)
+      } catch (e) {
+        continue
+      }
+      var remaining = []
+      var found = false
+      var urgency = 0
+      for (var member = 0; member < members.length; member++) {
+        if (String(members[member].key) === key) {
+          found = true
+          continue
+        }
+        remaining.push(members[member])
+        urgency = Math.max(urgency, Number(members[member].urgency || 0))
+      }
+      if (!found) continue
+      if (remaining.length === 0) {
+        rows.remove(i)
+        expandedGroup = ""
+        return true
+      }
+
+      var replacement = rowFor(remaining[0])
+      if (remaining.length > 1) {
+        replacement.groupCount = remaining.length
+        replacement.groupMembers = JSON.stringify(remaining)
+        replacement.groupIdentity = String(current.groupIdentity)
+        replacement.groupUrgency = urgency
+      } else if (expandedGroup === String(current.groupIdentity)) {
+        expandedGroup = ""
+      }
+      rows.set(i, replacement)
+      return true
+    }
+    return false
+  }
+
+  function removeMany(keys) {
+    if (!keys || keys.length === 0) return
+    var removing = {}
+    var args = ["remove"]
+    for (var i = 0; i < keys.length; i++) {
+      var key = String(keys[i] || "")
+      if (key === "" || removing[key]) continue
+      removing[key] = true
+      args.push(key)
+    }
+    if (args.length === 1) return
+
+    var next = []
+    for (var j = 0; j < entries.length; j++)
+      if (!removing[String(entries[j].key)]) next.push(entries[j])
+    entries = next
+    rebuild()
+    Quickshell.execDetached(root.storeCommand(args))
   }
 
   function clearAll() {
@@ -307,7 +384,9 @@ Panel {
     if (root.opened) markSeen()
     if (!matches(entry)) return
 
-    rows.insert(0, rowFor(entry))
+    // A new arrival may belong in an existing stack, so this cannot always be
+    // represented by inserting one row. Rebuild only the in-memory view.
+    rebuild()
     // A card inserted above the scroll position is a card you never see: the
     // list holds its offset, so the new one lands out of sight and the panel
     // looks like it missed it. Only when you are already at the top, though,
@@ -344,17 +423,163 @@ Panel {
       urgency: Number(entry.urgency || 0),
       timestamp: Number(entry.timestamp || 0),
       day: dayOf(Number(entry.timestamp || 0)),
-      time: Qt.formatDateTime(new Date(Number(entry.timestamp || 0)), "HH:mm")
+      time: Qt.formatDateTime(new Date(Number(entry.timestamp || 0)), "HH:mm"),
+      groupCount: 1,
+      groupMembers: "",
+      groupIdentity: "",
+      groupUrgency: Number(entry.urgency || 0)
     }
   }
 
-  function rebuild() {
-    rows.clear()
-    for (var i = 0; i < entries.length; i++)
-      if (matches(entries[i])) rows.append(rowFor(entries[i]))
+  function normalizedGroupText(value) {
+    return String(value || "")
+      .replace(/<img[^>]*>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
   }
 
-  onFilterChanged: rebuild()
+  function groupKey(entry) {
+    var app = normalizedGroupText(entry.app)
+    if (app === "") return ""
+    var mode = grouping === "Off" ? "By app" : grouping
+    if (mode === "By app") return app
+    if (mode !== "Similar") return ""
+    var summary = normalizedGroupText(entry.summary)
+    return summary === "" ? "" : app + "\n" + summary
+  }
+
+  function rebuild() {
+    var generation = ++rebuildGeneration
+    var savedContentY = list.contentY
+    var wasAtBeginning = list.atYBeginning
+    var anchorIdentity = ""
+    var anchorKey = ""
+    var anchorOffset = 0
+    if (!wasAtBeginning && rows.count > 0) {
+      var anchorIndex = list.indexAt(1, list.contentY + list.height / 2)
+      if (anchorIndex >= 0) {
+        var anchorRow = rows.get(anchorIndex)
+        var anchorItem = list.itemAtIndex(anchorIndex)
+        anchorIdentity = String(anchorRow.groupIdentity || "")
+        anchorKey = String(anchorRow.key || "")
+        if (anchorItem) anchorOffset = list.contentY - anchorItem.y
+      }
+    }
+    rows.clear()
+    var visible = []
+    for (var i = 0; i < entries.length; i++)
+      if (matches(entries[i])) visible.push(entries[i])
+
+    // Search results stay individual so a match is never hidden in a stack.
+    if (filter !== "" || !groupingEnabled) {
+      for (var plain = 0; plain < visible.length; plain++)
+        rows.append(rowFor(visible[plain]))
+      restoreScroll(generation, savedContentY, wasAtBeginning,
+                    anchorIdentity, anchorKey, anchorOffset)
+      return
+    }
+
+    var grouped = []
+    var positions = {}
+    for (var item = 0; item < visible.length; item++) {
+      var entry = visible[item]
+      var day = dayOf(Number(entry.timestamp || 0))
+      var key = groupKey(entry)
+      var identity = key === "" ? "" : day + "\n" + key
+      if (identity !== "" && positions[identity] !== undefined) {
+        var existing = grouped[positions[identity]]
+        existing.members.push(entry)
+        existing.urgency = Math.max(existing.urgency, Number(entry.urgency || 0))
+      } else {
+        if (identity !== "") positions[identity] = grouped.length
+        grouped.push({
+          latest: entry,
+          members: [entry],
+          urgency: Number(entry.urgency || 0),
+          identity: identity
+        })
+      }
+    }
+
+    var expansionFound = expandedGroup === ""
+    for (var group = 0; group < grouped.length; group++) {
+      var row = rowFor(grouped[group].latest)
+      row.groupCount = grouped[group].members.length
+      row.groupUrgency = grouped[group].urgency
+      if (row.groupCount > 1) {
+        row.groupMembers = JSON.stringify(grouped[group].members)
+        row.groupIdentity = grouped[group].identity
+        if (row.groupIdentity === expandedGroup) expansionFound = true
+      }
+      rows.append(row)
+    }
+    if (!expansionFound) expandedGroup = ""
+    restoreScroll(generation, savedContentY, wasAtBeginning,
+                  anchorIdentity, anchorKey, anchorOffset)
+  }
+
+  function restoreScroll(generation, contentY, wasAtBeginning,
+                         anchorIdentity, anchorKey, anchorOffset) {
+    Qt.callLater(function() {
+      if (generation !== rebuildGeneration) return
+      if (wasAtBeginning) {
+        list.positionViewAtBeginning()
+        return
+      }
+
+      if (anchorIdentity !== "" || anchorKey !== "") {
+        for (var i = 0; i < rows.count; i++) {
+          var row = rows.get(i)
+          if (!rowMatchesAnchor(row, anchorIdentity, anchorKey)) continue
+          let targetIndex = i
+          list.positionViewAtIndex(targetIndex, ListView.Beginning)
+          Qt.callLater(function() {
+            if (generation !== rebuildGeneration) return
+            var item = list.itemAtIndex(targetIndex)
+            if (item) {
+              var maxY = list.originY + Math.max(0, list.contentHeight - list.height)
+              list.contentY = Math.max(list.originY,
+                                       Math.min(item.y + anchorOffset, maxY))
+            }
+          })
+          return
+        }
+      }
+
+      var maxY = list.originY + Math.max(0, list.contentHeight - list.height)
+      list.contentY = Math.max(list.originY, Math.min(contentY, maxY))
+    })
+  }
+
+  function rowMatchesAnchor(row, groupIdentity, key) {
+    if (groupIdentity !== "" && String(row.groupIdentity || "") === groupIdentity)
+      return true
+    if (key === "") return false
+    if (String(row.key || "") === key) return true
+    if (!row.groupMembers) return false
+    try {
+      var members = JSON.parse(row.groupMembers)
+      for (var i = 0; i < members.length; i++)
+        if (String(members[i].key || "") === key) return true
+    } catch (e) {
+    }
+    return false
+  }
+
+  onFilterChanged: {
+    expandedGroup = ""
+    rebuild()
+  }
+  onGroupingChanged: {
+    groupingEnabled = grouping !== "Off"
+    rebuild()
+  }
+  onGroupingEnabledChanged: {
+    expandedGroup = ""
+    rebuild()
+  }
 
   // The heading a notification is filed under. Days rather than hours, because
   // what you remember about a notification you are hunting for is which day it
@@ -585,6 +810,39 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(2)
 
+            Row {
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(3)
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Group"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                color: root.foreground
+                opacity: root.groupingEnabled ? 0.8 : 0.5
+              }
+
+              ToggleSwitch {
+                id: groupSwitch
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.groupingEnabled
+                cursorRing: false
+                foreground: root.foreground
+                onToggled: root.groupingEnabled = !root.groupingEnabled
+
+                PanelToolTip {
+                  visible: groupSwitch.containsMouse
+                  text: root.groupingEnabled
+                    ? "Show every notification separately"
+                    : "Group notifications " + (root.grouping === "Similar"
+                        ? "by conversation" : "by app")
+                  fontFamily: root.fontFamily
+                }
+              }
+            }
+
             // Search is a button rather than a field standing open. An open
             // field takes the keyboard the moment the panel appears, and this
             // panel can be opened from a key binding while you are typing
@@ -727,29 +985,42 @@ Panel {
             }
           }
 
-          delegate: NotificationRow {
+          delegate: NotificationGroup {
             id: row
             required property var model
 
             width: list.width - list.lane
+            notificationKey: model.key
             app: model.app
             appIcon: model.appIcon
             summary: model.summary
             body: model.body
             image: model.image
             preview: model.preview
+            file: model.file
             glyph: model.glyph
             timestamp: model.timestamp
             now: root.now
             urgency: model.urgency
+            groupUrgency: model.groupUrgency
             unread: model.timestamp > root.readMark
+            readMark: root.readMark
+            count: model.groupCount
+            membersJson: model.groupMembers
+            groupIdentity: model.groupIdentity
+            expanded: model.groupIdentity !== ""
+              && root.expandedGroup === model.groupIdentity
             showBody: root.showBody
             showPreview: root.showPreview
             foreground: root.foreground
             fontFamily: root.fontFamily
 
-            onClicked: root.activate(row.model)
-            onRemoveRequested: root.remove(row.model.key)
+            onActivateRequested: function(entry) { root.activate(entry) }
+            onRemoveRequested: function(key) { root.remove(key) }
+            onRemoveAllRequested: function(keys) { root.removeMany(keys) }
+            onToggleRequested: function(identity) {
+              root.expandedGroup = root.expandedGroup === identity ? "" : identity
+            }
           }
         }
 
@@ -820,6 +1091,11 @@ Panel {
       return "reloading"
     }
 
+    function setGrouping(enabled: bool): string {
+      root.groupingEnabled = enabled
+      return enabled ? "grouping enabled" : "grouping disabled"
+    }
+
     // What the panel believes right now. For working out whether a
     // notification reached the list, which is otherwise a question you can
     // only answer by looking at the screen.
@@ -831,7 +1107,10 @@ Panel {
         newest: root.entries.length > 0 ? root.entries[0].summary : "",
         unread: root.unread,
         watching: watchProc.running,
-        searching: root.searching
+        searching: root.searching,
+        grouping: root.groupingEnabled
+          ? (root.grouping === "Off" ? "By app" : root.grouping)
+          : "Off"
       })
     }
   }

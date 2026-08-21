@@ -351,12 +351,28 @@ remove_key() {
   rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
 }
 
+remove_keys() {
+  local key removed=0
+  for key in "$@"; do
+    [[ -n $key ]] || continue
+    have_key "$key" || continue
+    remove_key "$key"
+    removed=$((removed + 1))
+  done
+  printf '%s' "$removed"
+}
+
 cmd_remove() {
   ensure_store
-  local key=$1
-  [[ -n $key ]] || die "remove needs a key"
-  with_lock remove_key "$key"
-  printf '{"ok":true,"removed":%s}\n' "$(printf '%s' "$key" | jq -Rs .)"
+  (($# > 0)) || die "remove needs at least one key"
+  local removed
+  removed=$(with_lock remove_keys "$@")
+  if (($# == 1)); then
+    # Preserve the original CLI response for existing single-key consumers.
+    printf '{"ok":true,"removed":%s}\n' "$(printf '%s' "$1" | jq -Rs .)"
+  else
+    printf '{"ok":true,"removed":%s}\n' "$removed"
+  fi
 }
 
 clear_all() {
@@ -527,7 +543,7 @@ case ${1:-} in
   sync)   shift; quiet=1; cmd_sync; printf '{"ok":true,"synced":true}\n' ;;
   watch)  shift; cmd_watch ;;
   list)   shift; cmd_list "${1:-200}" ;;
-  remove) shift; cmd_remove "${1:-}" ;;
+  remove) shift; cmd_remove "$@" ;;
   clear)  shift; cmd_clear ;;
   seen)   shift; cmd_seen "$@" ;;
   unread) shift; cmd_unread ;;
@@ -544,7 +560,7 @@ notification-center: the store behind the Omarchy notification center
   watch              follow the notification service and archive what it receives
   sync               catch up on anything not archived yet
   list [LIMIT]       the archive as JSON, newest first (default 200)
-  remove KEY         drop one notification
+  remove KEY [...]   drop one or more notifications
   clear              drop all of them
   seen [MS]          read or set when the center was last opened
   unread             how many arrived since then

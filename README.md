@@ -9,6 +9,18 @@ minutes later, in the middle of something else: *what did that say?*
 
 <img src="preview.png" alt="The notification center open on the right of the screen, a column of cards under Today and Yesterday" width="720">
 
+## Grouped notifications
+
+Notifications from the same app can collapse into one stack. Click the stack
+to expand it in place, dismiss individual notifications without losing your
+position, or use **Dismiss all** for the whole group. The header switch changes
+between grouped and individual notifications immediately.
+
+<p>
+  <img src="grouping-collapsed.png" alt="Three collapsed notification groups" width="360">
+  <img src="grouping-expanded.png" alt="An expanded Team Chat notification group" width="360">
+</p>
+
 ## Install
 
 ```bash
@@ -25,7 +37,8 @@ Omarchy's notification service already writes every notification to disk, and
 then keeps only the last ten. This copies each one out of there as it lands,
 icon and all, and keeps it for 30 days.
 
-- One card per notification, newest first, under the day it arrived on.
+- Notifications from the same app stack together within each day. A stack
+  opens inline; search results remain individual.
 - **A picture** when there was one. Cameras and screenshot tools hand their
   file to the notification's action rather than setting an image on it, so the
   path is read out of there and a scaled copy is kept.
@@ -34,12 +47,16 @@ icon and all, and keeps it for 30 days.
   command is chosen by whoever sent the notification, so a stored one would be
   an attacker's command waiting for a click. Only an absolute path to an image
   is kept, and it is opened by argument rather than through a shell.
-- **The × on a card**, or a right-click, removes one. **Clear** empties the
-  archive and asks twice.
+- **The × on a card**, or a right-click, removes one. A collapsed stack removes
+  only its newest item; open it for individual items or **Dismiss all**. **Clear**
+  empties the archive and asks twice.
 - **The bell in the header** is Do Not Disturb, the same switch as the bar's.
   Right-clicking the bell in the bar does it without opening anything.
 - **The magnifier**, or `/`, searches everything kept. Escape leaves the
   search, Escape again closes the panel.
+- **The Group switch** in the header immediately changes between app stacks
+  and individual notifications. The grouping style remains available in the
+  plugin settings.
 
 ## Settings
 
@@ -49,6 +66,7 @@ icon and all, and keeps it for 30 days.
 | Keep notifications for | 30 days | Older than this is deleted, icon and all. |
 | Keep at most | 1000 | A ceiling regardless of age. |
 | Clicking a notification | Auto | Opens the picture, or focuses the app. Or neither. |
+| Group notifications | By app | `Off`, `Similar` (same app and subject), or `By app`. |
 | Show the message text | on | Off leaves the sender and subject only. |
 | Show pictures | on | Off stops keeping copies as well. |
 | Panel width | 420 | In the shell's spacing units. |
@@ -81,7 +99,7 @@ than the panel loads:
 
 ```
 list [LIMIT]       the archive as JSON, newest first
-remove KEY         drop one, or clear for all of them
+remove KEY [...]   drop one or more
 seed [N]           fill it with test traffic
 backfill           give older entries the picture their action points at
 ```

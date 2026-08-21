@@ -35,6 +35,8 @@ Item {
   property bool showBody: true
   property bool showPreview: true
   property bool unread: false
+  property int count: 1
+  readonly property real groupActionHeight: groupAction.implicitHeight + texts.spacing
 
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
@@ -309,6 +311,18 @@ Item {
         font.pixelSize: Style.font.caption
         color: root.foreground
         opacity: 0.75
+      }
+
+      Text {
+        id: groupAction
+        textFormat: Text.PlainText
+        width: parent.width
+        visible: root.count > 1
+        text: "Show " + root.count + " notifications  \u25be"
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        color: Color.accent
       }
 
       // The picture, when the notification came with one. Wide rather than a
