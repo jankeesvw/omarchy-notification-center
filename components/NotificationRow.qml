@@ -390,7 +390,7 @@ Item {
       visible: root.unread && root.urgency !== 2
       anchors.left: parent.left
       anchors.leftMargin: Style.space(4)
-      anchors.verticalCenter: parent.verticalCenter
+      anchors.verticalCenter: avatar.verticalCenter
       width: Style.space(5)
       height: width
       radius: width / 2
