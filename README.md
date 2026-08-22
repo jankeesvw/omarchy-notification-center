@@ -11,14 +11,15 @@ minutes later, in the middle of something else: *what did that say?*
 
 ## Grouped notifications
 
-Notifications from the same app can collapse into one stack. Click the stack
-to expand it in place, dismiss individual notifications without losing your
-position, or use **Dismiss all** for the whole group. The header switch changes
-between grouped and individual notifications immediately.
+Notifications from the same app can collapse into one stack across days. Click
+the stack to expand it in place, with Today, Yesterday and older dates divided
+inside it. Dismiss individual notifications without losing your position, or
+use **Dismiss all** for the whole group. The header switch changes between
+grouped and individual notifications immediately.
 
 <p>
   <img src="grouping-collapsed.png" alt="Three collapsed notification groups" width="360">
-  <img src="grouping-expanded.png" alt="An expanded Team Chat notification group" width="360">
+  <img src="grouping-expanded.png" alt="An expanded Boomux group divided into Today and Yesterday" width="360">
 </p>
 
 ## Install
@@ -37,8 +38,8 @@ Omarchy's notification service already writes every notification to disk, and
 then keeps only the last ten. This copies each one out of there as it lands,
 icon and all, and keeps it for 30 days.
 
-- Notifications from the same app stack together within each day. A stack
-  opens inline; search results remain individual.
+- Notifications from the same app stack together across days. A stack opens
+  inline with its own day headings; search results remain individual.
 - **A picture** when there was one. Cameras and screenshot tools hand their
   file to the notification's action rather than setting an image on it, so the
   path is read out of there and a scaled copy is kept.

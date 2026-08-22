@@ -125,7 +125,12 @@ Panel {
     running: root.opened
     repeat: true
     triggeredOnStart: true
-    onTriggered: root.now = Date.now()
+    onTriggered: {
+      var previousDay = Qt.formatDateTime(new Date(root.now), "yyyy-MM-dd")
+      root.now = Date.now()
+      if (previousDay !== Qt.formatDateTime(new Date(root.now), "yyyy-MM-dd"))
+        root.rebuild()
+    }
   }
 
   // The watcher is what keeps the list live, and this is what keeps the list
@@ -294,6 +299,9 @@ Panel {
         return true
       }
       if (Number(current.groupCount) <= 1 || current.groupMembers === "") continue
+      // The newest member determines this row's order and outer day section.
+      // Let a full rebuild reposition the group when that member is removed.
+      if (String(current.key) === key) return false
 
       var members
       try {
@@ -485,15 +493,18 @@ Panel {
     var positions = {}
     for (var item = 0; item < visible.length; item++) {
       var entry = visible[item]
-      var day = dayOf(Number(entry.timestamp || 0))
       var key = groupKey(entry)
-      var identity = key === "" ? "" : day + "\n" + key
-      if (identity !== "" && positions[identity] !== undefined) {
-        var existing = grouped[positions[identity]]
+      // Days divide the notifications inside a stack, not the stack itself.
+      var identity = key
+      // Prefix map keys so app names such as "constructor" and "__proto__"
+      // cannot collide with properties inherited from Object.prototype.
+      var positionKey = "$" + identity
+      if (identity !== "" && positions[positionKey] !== undefined) {
+        var existing = grouped[positions[positionKey]]
         existing.members.push(entry)
         existing.urgency = Math.max(existing.urgency, Number(entry.urgency || 0))
       } else {
-        if (identity !== "") positions[identity] = grouped.length
+        if (identity !== "") positions[positionKey] = grouped.length
         grouped.push({
           latest: entry,
           members: [entry],
@@ -587,14 +598,16 @@ Panel {
   // headings.
   function dayOf(timestamp) {
     var when = new Date(timestamp)
-    var now = new Date()
-    var midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-    if (timestamp >= midnight) return "Today"
-    if (timestamp >= midnight - 86400000) return "Yesterday"
+    var current = new Date(root.now || Date.now())
+    var today = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) / 86400000
+    var thatDay = Date.UTC(when.getFullYear(), when.getMonth(), when.getDate()) / 86400000
+    var daysAgo = today - thatDay
+    if (daysAgo <= 0) return "Today"
+    if (daysAgo === 1) return "Yesterday"
     // Within the week the weekday is the better handle: "Tuesday" is how you
     // remember it, "17 August" is how you would have to work it out.
-    if (timestamp >= midnight - 6 * 86400000) return Qt.formatDateTime(when, "dddd")
-    if (when.getFullYear() === now.getFullYear()) return Qt.formatDateTime(when, "d MMMM")
+    if (daysAgo <= 6) return Qt.formatDateTime(when, "dddd")
+    if (when.getFullYear() === current.getFullYear()) return Qt.formatDateTime(when, "d MMMM")
     return Qt.formatDateTime(when, "d MMMM yyyy")
   }
 

@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Ui
 
 // A single notification until related arrivals give it something to stack.
 // Expanded stacks use the ordinary notification row for every child, so all
@@ -71,6 +72,21 @@ Item {
     removeAllRequested(keys)
   }
 
+  function dayOf(value) {
+    var when = new Date(Number(value || 0))
+    // Reading root.now makes the heading reactive to the panel's clock tick.
+    var current = new Date(root.now || Date.now())
+    var today = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) / 86400000
+    var thatDay = Date.UTC(when.getFullYear(), when.getMonth(), when.getDate()) / 86400000
+    var daysAgo = today - thatDay
+    if (daysAgo <= 0) return "Today"
+    if (daysAgo === 1) return "Yesterday"
+    if (daysAgo <= 6) return Qt.formatDateTime(when, "dddd")
+    if (when.getFullYear() === current.getFullYear())
+      return Qt.formatDateTime(when, "d MMMM")
+    return Qt.formatDateTime(when, "d MMMM yyyy")
+  }
+
   implicitHeight: expanded
     ? expandedColumn.implicitHeight
     : collapsed.implicitHeight + (count > 1 ? Style.space(4) : 0)
@@ -100,7 +116,7 @@ Item {
   NotificationRow {
     id: collapsed
     z: 1
-    y: root.expanded ? groupHeader.height + Style.space(6) : 0
+    y: root.expanded ? summarySlot.y : 0
     width: parent.width
     app: root.app
     appIcon: root.appIcon
@@ -188,10 +204,27 @@ Item {
       }
     }
 
+    Item {
+      width: parent.width
+      height: latestDayLabel.implicitHeight + Style.space(8)
+
+      PanelSectionHeader {
+        id: latestDayLabel
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(2)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(2)
+        text: root.dayOf(root.timestamp).toUpperCase()
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+      }
+    }
+
     // The summary card is positioned in this slot while expanded. Keeping the
     // slot in the column puts older notifications immediately beneath it while
     // allowing the group header and summary to exchange places.
     Item {
+      id: summarySlot
       width: parent.width
       height: collapsed.implicitHeight
     }
@@ -201,27 +234,57 @@ Item {
       // expansion adds only the older members rather than duplicating it.
       model: root.members.slice(1)
 
-      NotificationRow {
+      Item {
         required property var modelData
+        required property int index
         width: expandedColumn.width
-        app: String(modelData.app || "")
-        appIcon: String(modelData.appIcon || "")
-        summary: String(modelData.summary || "")
-        body: String(modelData.body || "")
-        image: String(modelData.image || "")
-        preview: String(modelData.preview || "")
-        glyph: String(modelData.glyph || "")
-        timestamp: Number(modelData.timestamp || 0)
-        now: root.now
-        urgency: Number(modelData.urgency || 0)
-        unread: timestamp > root.readMark
-        showBody: root.showBody
-        showPreview: root.showPreview
-        foreground: root.foreground
-        fontFamily: root.fontFamily
+        readonly property string entryDay: root.dayOf(modelData.timestamp)
+        readonly property string previousDay: root.dayOf(root.members[index].timestamp)
+        readonly property bool startsDay: entryDay !== previousDay
+        implicitHeight: childRow.y + childRow.implicitHeight
 
-        onClicked: root.activateRequested(modelData)
-        onRemoveRequested: root.removeRequested(String(modelData.key || ""))
+        Item {
+          id: childDaySection
+          width: parent.width
+          height: parent.startsDay
+            ? childDayLabel.implicitHeight + Style.space(8) : 0
+          visible: parent.startsDay
+
+          PanelSectionHeader {
+            id: childDayLabel
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(2)
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Style.space(2)
+            text: parent.parent.entryDay.toUpperCase()
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+        }
+
+        NotificationRow {
+          id: childRow
+          y: childDaySection.height
+          width: parent.width
+          app: String(modelData.app || "")
+          appIcon: String(modelData.appIcon || "")
+          summary: String(modelData.summary || "")
+          body: String(modelData.body || "")
+          image: String(modelData.image || "")
+          preview: String(modelData.preview || "")
+          glyph: String(modelData.glyph || "")
+          timestamp: Number(modelData.timestamp || 0)
+          now: root.now
+          urgency: Number(modelData.urgency || 0)
+          unread: timestamp > root.readMark
+          showBody: root.showBody
+          showPreview: root.showPreview
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+
+          onClicked: root.activateRequested(modelData)
+          onRemoveRequested: root.removeRequested(String(modelData.key || ""))
+        }
       }
     }
   }

@@ -53,7 +53,7 @@
           "By app"
         ],
         "defaultValue": "By app",
-        "description": "Similar groups notifications from the same app with the same subject or conversation, within each day. By app combines everything from one app. Search results are always shown individually."
+        "description": "Similar groups by app and subject or conversation; By app combines everything from one app. Both modes span days and show day headings inside expanded groups. Search results are always shown individually."
       },
       {
         "key": "keepDays",
