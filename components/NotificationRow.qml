@@ -199,6 +199,23 @@ Item {
         asynchronous: true
         smooth: true
       }
+
+      // Unread belongs to the sender, so it rides on the sender's icon rather
+      // than floating at the card edge. The background ring keeps the accent
+      // legible over both real artwork and the fallback initial.
+      Rectangle {
+        visible: root.unread && root.urgency !== 2
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: -Style.space(2)
+        anchors.bottomMargin: -Style.space(2)
+        width: Style.space(9)
+        height: width
+        radius: width / 2
+        color: Color.accent
+        border.width: Style.space(2)
+        border.color: Color.background
+      }
     }
 
     Column {
@@ -383,18 +400,5 @@ Item {
       }
     }
 
-    // Unread marker: a dot in the accent colour on the leading edge, where an
-    // unread mail sits in every mail client. Cleared the moment you open the
-    // center, which is what makes it worth having.
-    Rectangle {
-      visible: root.unread && root.urgency !== 2
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(4)
-      anchors.verticalCenter: avatar.verticalCenter
-      width: Style.space(5)
-      height: width
-      radius: width / 2
-      color: Color.accent
-    }
   }
 }
