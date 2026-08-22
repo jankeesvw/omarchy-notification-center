@@ -39,6 +39,8 @@ archive="$store/archive.jsonl"
 images="$store/images"
 seen_file="$store/seen"
 lock_file="$store/lock"
+dismissed_file="$store/dismissed"
+cleared_file="$store/cleared_at"
 
 # How much is kept. Both are ceilings and the tighter one wins: 30 days of a
 # quiet week is a shorter list than 1000 notifications, and 1000 notifications
@@ -71,25 +73,22 @@ with_lock() {
 ensure_store() {
   mkdir -p "$store" "$images" || die "cannot create $store"
   [[ -f $archive ]] || : > "$archive"
+  [[ -f $dismissed_file ]] || : > "$dismissed_file"
   # Installs that predate the umask above created these 755 and 644, which on a
   # machine with a second account hands over every notification you have had
   # for the reading. Cheap enough to reassert on every call.
   chmod 700 "$store" "$images" 2>/dev/null || true
-  chmod 600 "$archive" 2>/dev/null || true
+  chmod 600 "$archive" "$dismissed_file" 2>/dev/null || true
+  [[ -f $cleared_file ]] && chmod 600 "$cleared_file" 2>/dev/null || true
 }
 
 now_ms() { printf '%s' "$(($(date +%s%N) / 1000000))"; }
 
 # ---------------------------------------------------------------- ingesting
 
-# Whether this notification is already in the archive. Keys are the service's
-# own file names ("1787227796695-32"): a millisecond stamp and the notification
-# id, which is unique per notification and stable across the move from the
-# popup directory into history. That is what makes catching the same file twice
-# harmless, and it has to be, because a popup is caught once while it is on
-# screen and again when it is archived.
+# Whether this notification is already in the archive or explicitly dismissed.
 have_key() {
-  grep -qF "\"key\":\"$1\"" "$archive" 2>/dev/null
+  grep -qF "\"key\":\"$1\"" "$archive" 2>/dev/null || grep -qxF "$1" "$dismissed_file" 2>/dev/null
 }
 
 # An icon path worth copying: something on disk rather than a themed icon name
@@ -163,21 +162,23 @@ preview_source() {
 
 # Take one of the service's JSON files into the archive, and print the entry
 # that was added.
-#
-# The second argument is what makes two screens work. The bar runs once per
-# monitor and each copy has its own watcher, so both see the same notification
-# and both try to archive it; one takes the lock first and the other finds the
-# key already there. If that second one stayed silent, the panel on its screen
-# would never hear about the notification at all, and would sit there missing
-# it until something else made it re-read the archive. So a live watcher prints
-# the entry whether it wrote it or found it, and the panels drop the duplicate
-# by key. The catch-up sync passes 0 instead, or starting the shell would
-# replay the whole archive at both of them.
 ingest_file() {
   local file=$1 announce_existing=${2:-0}
   local key entry app_icon image_src exec_src icon_copy image_copy file_src preview_copy
   key=$(basename -- "$file"); key=${key%.json}
   [[ -n $key ]] || return 0
+
+  # Skip notifications that arrived before the last clear
+  if [[ -f $cleared_file ]]; then
+    local cleared_at
+    cleared_at=$(cat "$cleared_file" 2>/dev/null || echo 0)
+    local key_stamp=${key#seed-}
+    key_stamp=${key_stamp%%-*}
+    if [[ $key_stamp =~ ^[0-9]+$ ]] && (( key_stamp <= cleared_at )); then
+      return 0
+    fi
+  fi
+
   if have_key "$key"; then
     (( announce_existing )) && grep -F "\"key\":\"$key\"" "$archive" | head -n 1
     return 0
@@ -256,6 +257,19 @@ sync_all() {
 prune() {
   local cutoff kept dropped
   cutoff=$(( $(now_ms) - keep_days * 86400000 ))
+
+  if [[ -f $cleared_file ]]; then
+    local cleared_at
+    cleared_at=$(cat "$cleared_file" 2>/dev/null || echo 0)
+    if [[ $cleared_at =~ ^[0-9]+$ ]] && (( cleared_at < cutoff )); then
+      rm -f -- "$cleared_file"
+    fi
+  fi
+
+  if [[ -f $dismissed_file ]]; then
+    tail -n "$max_items" "$dismissed_file" > "$dismissed_file.tmp" 2>/dev/null && mv -f "$dismissed_file.tmp" "$dismissed_file"
+  fi
+
   [[ -s $archive ]] || return 0
 
   kept=$(jq -c --argjson cutoff "$cutoff" 'select(.timestamp >= $cutoff)' "$archive" 2>/dev/null | tail -n "$max_items")
@@ -349,6 +363,8 @@ remove_key() {
   grep -vF "\"key\":\"$key\"" "$archive" > "$archive.tmp" 2>/dev/null || : > "$archive.tmp"
   mv -f "$archive.tmp" "$archive"
   rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
+  printf '%s\n' "$key" >> "$dismissed_file"
+  rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
 }
 
 cmd_remove() {
@@ -361,7 +377,10 @@ cmd_remove() {
 
 clear_all() {
   : > "$archive"
+  : > "$dismissed_file"
+  now_ms > "$cleared_file"
   rm -f -- "$images"/*
+  rm -f -- "$src_history"/*.json "$src_dir"/*.json
 }
 
 cmd_clear() {
@@ -400,6 +419,8 @@ cmd_unread() {
 # resolve out of the icon theme the way they do for the real thing.
 cmd_seed() {
   ensure_store
+  rm -f -- "$cleared_file"
+  : > "$dismissed_file"
   with_lock seed_entries "${1:-25}"
   printf '{"ok":true,"seeded":%s}\n' "${1:-25}"
 }
