@@ -28,6 +28,7 @@ Item {
 
   property var entries: []
   property double lastSeen: 0
+  property double pendingSeen: 0
   property bool loaded: false
 
   readonly property bool watching: watchProc.running
@@ -78,7 +79,10 @@ Item {
   function markSeen() {
     var stamp = Date.now()
     root.lastSeen = stamp
-    if (markProc.running) return
+    if (markProc.running) {
+      root.pendingSeen = Math.max(root.pendingSeen, stamp)
+      return
+    }
     markProc.command = root.storeCommand(["seen", String(stamp)])
     markProc.running = true
   }
@@ -180,7 +184,17 @@ Item {
     }
   }
 
-  Process { id: markProc; environment: root.storeEnvironment }
+  Process {
+    id: markProc
+    environment: root.storeEnvironment
+    onExited: {
+      if (root.pendingSeen <= 0) return
+      var stamp = root.pendingSeen
+      root.pendingSeen = 0
+      command = root.storeCommand(["seen", String(stamp)])
+      running = true
+    }
+  }
 
   Component.onCompleted: {
     readSeen()
