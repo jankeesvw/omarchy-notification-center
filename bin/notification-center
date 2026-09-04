@@ -202,6 +202,33 @@ preview_source() {
   printf '%s' "$action" | grep -oiE "(file://)?/[^\"' ]*\.(jpe?g|png|webp|gif)" | head -n 1
 }
 
+# The one thing an old notification is still allowed to do: put you back where
+# it came from.
+#
+# The command a notification arrives with is chosen by whoever sent it, and
+# anything on this machine can send one, so that command is still never kept.
+# What is kept is an argv whose PROGRAM is one of a fixed set that can do
+# nothing but move focus or speak to the shell's own IPC. Never a shell, never
+# an interpreter, never a path the sender chose: the program is compared by its
+# basename against the list, so /tmp/evil/qs is the same "qs" and is run from
+# PATH rather than from where the sender put it. A sender asking for anything
+# else has nothing stored and its click falls back to focusing by app name,
+# which is what every row did before this existed.
+focus_argv() {
+  local action=$1
+  [[ $action == \[* ]] || return 0
+  printf '%s' "$action" | jq -c '
+    def allowed: ["omarchy-hyprland-focus-app", "qs", "omarchy-shell"];
+    select(type == "array" and length > 0 and length <= 16)
+    | select(all(.[]; type == "string" and length <= 512
+                      and (test("[\u0000-\u001f]") | not)))
+    | . as $argv
+    | ($argv[0] | split("/") | last) as $prog
+    | select(allowed | index($prog))
+    | [$prog] + $argv[1:]
+  ' 2>/dev/null | head -n 1
+}
+
 # Take one of the service's JSON files into the archive, and print the entry
 # that was added.
 #
@@ -216,7 +243,7 @@ preview_source() {
 # replay the whole archive at both of them.
 ingest_file() {
   local file=$1 announce_existing=${2:-0}
-  local key entry app_icon image_src exec_src icon_copy image_copy file_src preview_copy
+  local key entry app_icon image_src exec_src icon_copy image_copy file_src preview_copy focus_src
   key=$(basename -- "$file"); key=${key%.json}
   [[ -n $key ]] || return 0
   if is_dismissed "$key"; then
@@ -259,6 +286,11 @@ ingest_file() {
   file_src=$(preview_source "$exec_src")
   file_src=${file_src#file://}
 
+  # And where the notification came from, if it is willing to say so in a form
+  # that can only take you there. Everything else about the command is dropped
+  # exactly as before.
+  focus_src=$(focus_argv "$exec_src")
+
   preview_copy=""
   if (( previews )) && [[ -n $file_src ]]; then
     preview_copy=$(copy_image "$file_src" "$key" "preview")
@@ -270,6 +302,7 @@ ingest_file() {
     --arg image "$image_copy" \
     --arg preview "$preview_copy" \
     --arg file "$file_src" \
+    --arg focus "$focus_src" \
     '{
        key: $key,
        app: (.app // ""),
@@ -279,6 +312,7 @@ ingest_file() {
        image: $image,
        preview: $preview,
        file: $file,
+       focus: $focus,
        glyph: (.glyph // ""),
        urgency: (.urgency // 1),
        timestamp: (.timestamp // 0)

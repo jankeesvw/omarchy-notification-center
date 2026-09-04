@@ -240,6 +240,31 @@ Panel {
   // an absolute path to an image, and that is opened by argument rather than
   // through a shell, so a hostile path is a file that fails to open instead of
   // a command that runs.
+  // The only programs an old notification may name. No shell, no interpreter,
+  // and no path: a program with a slash in it does not appear in this list and
+  // so cannot match.
+  readonly property var focusPrograms: [
+    "omarchy-hyprland-focus-app", "qs", "omarchy-shell"
+  ]
+
+  function parseFocus(value) {
+    if (!value) return null
+    var argv
+    try {
+      argv = JSON.parse(String(value))
+    } catch (e) {
+      return null
+    }
+    if (!Array.isArray(argv) || argv.length === 0 || argv.length > 16) return null
+    for (var i = 0; i < argv.length; i++) {
+      var arg = argv[i]
+      if (typeof arg !== "string" || arg.length > 512) return null
+      for (var c = 0; c < arg.length; c++)
+        if (arg.charCodeAt(c) < 32) return null
+    }
+    return root.focusPrograms.indexOf(argv[0]) === -1 ? null : argv
+  }
+
   function activate(row) {
     if (!row || clickAction === "Nothing") return
     if (clickAction === "Auto" && row.file !== "") {
@@ -247,6 +272,23 @@ Panel {
       root.close()
       return
     }
+    // A notification that said where it came from, in a form that can do
+    // nothing but take you there.
+    //
+    // The store kept this argv only if its program was one of a fixed few that
+    // focus a window or speak to the shell's own IPC, and it kept the
+    // program's BASENAME, so this runs the real one from PATH rather than
+    // whichever binary the sender pointed at. Everything else a notification
+    // arrives carrying is still dropped at ingest and never reaches here. The
+    // check is repeated here rather than trusted from the archive, because the
+    // archive is a file and the panel is the thing that runs the command.
+    var focus = root.parseFocus(row.focus)
+    if (focus) {
+      Quickshell.execDetached(focus)
+      root.close()
+      return
+    }
+
     // The app name is on the notification too, so it is the sender's to choose,
     // and the focus helper matches it as a regular expression: an app calling
     // itself ".*" would focus whichever window that hit first. Only something
