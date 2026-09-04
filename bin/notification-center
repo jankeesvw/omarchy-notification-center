@@ -39,6 +39,7 @@ archive="$store/archive.jsonl"
 images="$store/images"
 seen_file="$store/seen"
 lock_file="$store/lock"
+watch_lock="$store/watch.lock"
 dismissed_file="$store/dismissed"
 cleared_at_file="$store/cleared_at"
 
@@ -409,6 +410,23 @@ disarm_archive() {
 
 cmd_watch() {
   ensure_store
+
+  # One watcher, however many times the shell has been restarted.
+  #
+  # The shell starts a watcher when it loads this plugin, and a watcher that
+  # outlives the shell that started it keeps archiving on its own — reparented
+  # to init, invisible, and running whatever this script said on the day it
+  # started. Several of those racing for the archive lock means the entry that
+  # gets written is whichever stale copy won, which reads as a notification
+  # that inconsistently remembers where it came from. The lock is held for as
+  # long as this process lives and released by the kernel when it dies, so
+  # nothing has to be cleaned up and a genuinely dead watcher never blocks its
+  # replacement.
+  exec 9>"$watch_lock" 2>/dev/null || true
+  if ! flock -n 9 2>/dev/null; then
+    exit 0
+  fi
+
   mkdir -p "$src_dir" "$src_history"
   # Catch up first: the shell has been down, or this is the first run, and
   # whatever arrived in the meantime is still lying in those directories.
