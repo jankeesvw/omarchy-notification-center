@@ -341,6 +341,15 @@ Panel {
     // different pictures of one state.
     text: root.dnd ? "\uDB80\uDC9B" : "\uDB80\uDC9A"
     dimmed: root.dnd
+
+    // The Highlight marker: no shape added beside the bell, the bell itself
+    // recoloured. BarIconButton already draws its glyph in activeColor while
+    // active, which is the same mechanism the bar's own indicators use to say
+    // a thing wants you, so this is that state rather than a second drawing of
+    // it. Accent instead of the inherited urgent, because unread mail is not
+    // an emergency.
+    active: root.badge === "Highlight" && root.unread > 0
+    activeColor: Color.accent
     tooltipText: {
       if (root.dnd) return root.unread > 0
         ? "Silenced · " + root.unread + " new" : "Notifications silenced"
@@ -372,7 +381,7 @@ Panel {
     visible: false
   }
 
-  // The unread marker, drawn over the bell rather than beside it: a bar that
+  // The Dot marker, drawn over the bell rather than beside it: a bar that
   // changes width every time a message arrives is a bar that twitches all day.
   Rectangle {
     id: dot
@@ -430,7 +439,27 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: popup.fittedContentWidth(Style.space(root.panelWidth))
-    contentHeight: popup.fittedContentHeight(content.implicitHeight)
+    // fittedContentHeight() clamps against availableCardHeight, which collapses
+    // to its 120px minimum under a screen-sized bar window (see
+    // usableCardHeight below), so the same fit is done here against the
+    // corrected ceiling: the content plus the card insets, never taller than
+    // the space the screen actually has.
+    contentHeight: Math.round(Math.min(
+      Math.max(popup.verticalContentInset, content.implicitHeight + popup.verticalContentInset),
+      popup.usableCardHeight))
+
+    // The stock omarchy bar window is only as tall as the bar strip, so the
+    // screen minus that window is the space a panel has. Shibumi draws its
+    // strip inside a screen-sized window instead, which makes KeyboardPanel
+    // mistake the whole screen for the bar and collapse to its 120px safety
+    // minimum - a card a few entries tall no matter how much room there is.
+    // Measure the strip itself when the window is screen-sized; both bars
+    // expose barSize, so this works under either host.
+    readonly property real usableCardHeight: {
+      if (barH >= screenH && root.bar && Number(root.bar.barSize) > 0)
+        return Math.max(120, screenH - (Number(root.bar.barSize) + gap + margin))
+      return availableCardHeight
+    }
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -505,43 +534,18 @@ Panel {
               onClicked: root.toggleDnd()
             }
 
-            // A word rather than a glyph. Everything in this row is
-            // destructive in a different way, one silences and one deletes,
-            // and a picture of a broom is not the place to find that out.
+            // A word rather than a glyph. The other control in this row
+            // silences and this one empties the panel, and a picture of a
+            // broom is not the place to find out which is which.
             Button {
-              id: clearButton
               anchors.verticalCenter: parent.verticalCenter
-              // Deleting a month of notifications is one click away from
-              // silencing them, and there is no undo. A second click is
-              // cheaper than a dialog and enough to make it deliberate; it
-              // forgets itself after a few seconds so the panel is never left
-              // armed.
-              property bool armed: false
-
-              text: armed ? "Sure?" : "Clear"
-              tooltipText: armed
-                ? "Click again to delete every notification kept here"
-                : "Delete every notification kept here"
-              foreground: armed ? Color.urgent : root.foreground
+              text: "Clear"
+              tooltipText: "Empty the panel"
+              foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
               enabled: root.entries.length > 0
-              onClicked: {
-                if (armed) {
-                  armed = false
-                  disarm.stop()
-                  root.clearAll()
-                } else {
-                  armed = true
-                  disarm.restart()
-                }
-              }
-
-              Timer {
-                id: disarm
-                interval: 4000
-                onTriggered: clearButton.armed = false
-              }
+              onClicked: root.clearAll()
             }
           }
         }
@@ -578,7 +582,7 @@ Panel {
             var chrome = header.height + search.implicitHeight + foot.implicitHeight
                        + content.spacing * 3
             return Math.max(Style.space(240),
-                            popup.availableCardHeight - popup.verticalContentInset - chrome)
+                            popup.usableCardHeight - popup.verticalContentInset - chrome)
           }
 
           height: Math.min(contentHeight, cap)

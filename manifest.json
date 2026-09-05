@@ -38,11 +38,12 @@
         "label": "Mark what you have not read",
         "options": [
           "Dot",
+          "Highlight",
           "Count",
           "None"
         ],
         "defaultValue": "Dot",
-        "description": "What the bell says about notifications that arrived since you last opened the center. A dot says there are some, which is the question you actually ask of a bar; a count says how many, and turns the bell into something you read rather than glance at."
+        "description": "What the bell says about notifications that arrived since you last opened the center. A dot says there are some, which is the question you actually ask of a bar; a count says how many, and turns the bell into something you read rather than glance at. Highlight adds nothing beside the bell and colours the bell itself in the theme accent instead, which is how the rest of the bar already says a thing wants you, and it is the one that leaves the row of icons exactly the shape it was."
       },
       {
         "key": "keepDays",

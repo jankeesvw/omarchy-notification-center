@@ -362,19 +362,63 @@ prune() {
 
   [[ -s $archive ]] || return 0
 
-  kept=$(jq -c --argjson cutoff "$cutoff" 'select(.timestamp >= $cutoff)' "$archive" 2>/dev/null | tail -n "$max_items")
+  # Read first, and only then decide to write. A single unparseable line makes
+  # jq exit non-zero having printed nothing, and this used to run that nothing
+  # straight back over the archive: one bad byte and somebody's month of
+  # notifications was gone. The pipeline hid it twice over, because the status
+  # of `jq | tail` is tail's and tail is always happy, and because the `||` on
+  # the write emptied the file on the other branch as well. So no pipeline
+  # here, and a failed read leaves the archive exactly as it was.
+  #
+  # An empty result from a jq that *succeeded* is a real answer: everything in
+  # there has aged out, and the archive is meant to end up empty.
+  # `fromjson?` rather than a plain read: one unparseable line is skipped and
+  # the rest of the file still gets through. A plain `jq` stops dead at that
+  # line, which meant everything after it was missing from `kept` and was then
+  # written back over the archive as the new truth. Everything below the bad
+  # byte, gone.
+  if ! kept=$(jq -Rc --argjson cutoff "$cutoff" \
+      'fromjson? // empty | select(.timestamp >= $cutoff)' "$archive" 2>/dev/null); then
+    return 0
+  fi
+  kept=$(printf '%s\n' "$kept" | tail -n "$max_items")
+
   dropped=$(comm -23 \
     <(jq -r '.key' "$archive" 2>/dev/null | sort) \
     <(printf '%s\n' "$kept" | jq -r 'select(.key) | .key' 2>/dev/null | sort))
 
-  printf '%s\n' "$kept" | grep -v '^$' > "$archive.tmp" 2>/dev/null || : > "$archive.tmp"
+  printf '%s\n' "$kept" | grep -v '^$' > "$archive.tmp" || true
   mv -f "$archive.tmp" "$archive"
 
   local key
   while IFS= read -r key; do
     [[ -n $key ]] || continue
     rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
+    # The source file too. It was the service's copy of something this archive
+    # now no longer has, so there is nothing left that would show it again.
+    rm -f -- "$src_history/$key.json"
   done <<< "$dropped"
+
+  # And the source files under the clear line. Clear draws that line instead of
+  # deleting anything, which leaves the tidying to happen here: the archive has
+  # these, nothing is going to show them again, and this directory is not
+  # cleaned by anybody else. Doing it on the retention pass rather than on the
+  # click is the whole point, because a click that deletes is a click you have
+  # to be sure about.
+  if [[ -s $cleared_at_file ]]; then
+    local cleared_at f base stamp
+    cleared_at=$(cat "$cleared_at_file" 2>/dev/null || echo 0)
+    if [[ $cleared_at =~ ^[0-9]+$ ]] && (( cleared_at > 0 )); then
+      for f in "$src_history"/*.json; do
+        [[ -e $f ]] || continue
+        base=${f##*/}
+        base=${base%.json}
+        stamp=${base%%-*}
+        [[ $stamp =~ ^[0-9]+$ ]] || continue
+        (( stamp <= cleared_at )) && rm -f -- "$f"
+      done
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------- commands
@@ -461,8 +505,21 @@ ingest_one() {
 cmd_list() {
   ensure_store
   local limit=${1:-200}
-  # Newest first, because that is the order it is read in.
-  tail -n "$limit" "$archive" 2>/dev/null | tac | jq -s '.' 2>/dev/null || printf '[]\n'
+  local cleared_at=0
+  if [[ -s $cleared_at_file ]]; then
+    cleared_at=$(cat "$cleared_at_file" 2>/dev/null || echo 0)
+    [[ $cleared_at =~ ^[0-9]+$ ]] || cleared_at=0
+  fi
+
+  # Newest first, because that is the order it is read in. Cleared entries are
+  # filtered rather than deleted, so the cut has to happen before the limit:
+  # take the newest N of what is still showing, not what is left of the newest
+  # N after the cleared ones are dropped out of it.
+  tac "$archive" 2>/dev/null \
+    | jq -Rc --argjson cleared "$cleared_at" \
+        'fromjson? // empty | select((.timestamp // 0) > $cleared)' 2>/dev/null \
+    | head -n "$limit" \
+    | jq -s '.' 2>/dev/null || printf '[]\n'
 }
 
 remove_key() {
@@ -486,15 +543,18 @@ cmd_remove() {
   printf '{"ok":true,"removed":%s}\n' "$(printf '%s' "$key" | jq -Rs .)"
 }
 
+# Clear is a line drawn under what you have seen, not a shredder. It used to
+# empty the archive, delete every stored image, and delete the source history
+# out from under the service as well, which is a lot of somebody's month to
+# hang on one click with no way back.
+#
+# The timestamp on its own already does the whole job: `is_dismissed` treats
+# every key older than it as dismissed, ingest skips source files older than
+# it, and `list` filters on it. Everything below the line simply stops being
+# shown, and ages out through the ordinary retention limits like everything
+# else. Nothing to confirm, because nothing is destroyed.
 clear_all() {
   now_ms > "$cleared_at_file"
-  : > "$archive"
-  : > "$dismissed_file"
-  rm -f -- "$images"/*
-  for f in "$src_history"/*.json; do
-    [[ -e $f ]] || continue
-    rm -f -- "$f"
-  done
 }
 
 cmd_clear() {
