@@ -42,6 +42,14 @@ icon and all, and keeps it for 30 days.
   Right-clicking the bell in the bar does it without opening anything.
 - **The magnifier**, or `/`, searches everything kept. Escape leaves the
   search, Escape again closes the panel.
+- **The buttons a notification came with** are on its card: Mark as read,
+  Archive, whatever the toast offered. While the toast is still up they go
+  straight to the app that sent it. For anything KDE Connect relayed from
+  your phone they keep working as long as the notification is still on the
+  phone, which is where the button is actually pressed. Those cards also get
+  **Reply**, a field that sends to the phone's messaging app, and **Clear on
+  phone**. Needs `busctl` and a paired phone with notification sync on;
+  without KDE Connect the cards simply show no buttons.
 
 ## Settings
 
@@ -90,6 +98,10 @@ backfill           give older entries the picture their action points at
 
 `watch`, `sync`, `seen`, `unread` and `prune` are in there too; everything
 prints JSON.
+
+`phone list`, `phone action`, `phone reply` and `phone dismiss` are the KDE
+Connect side, talking to `kdeconnectd` over D-Bus; the panel's buttons go
+through them.
 
 ```bash
 # everything Slack sent you last week, as text

@@ -129,6 +129,11 @@ Panel {
   readonly property bool loaded: store ? store.loaded : false
   property bool searching: false
   property double now: Date.now()
+  // The card whose reply field is open, by archive key. Kept here rather
+  // than on the card because the card is a delegate and forgets itself when
+  // scrolled out of view.
+  property string replyingKey: ""
+  readonly property int actionsVersion: store ? store.actionsVersion : 0
 
   readonly property int unread: store ? store.unread : 0
   readonly property double lastSeen: store ? store.lastSeen : 0
@@ -151,6 +156,38 @@ Panel {
     filter = ""
     search.text = ""
     Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
+  }
+
+  function endReply() {
+    replyingKey = ""
+    Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
+  }
+
+  // The buttons a card shows: whatever the toast carried, plus reply and
+  // clear when the phone still has the notification. See the service.
+  function actionsFor(row) {
+    if (!store) return null
+    return store.actionsFor(row, actionsVersion)
+  }
+
+  // Pressing a button is dealing with the notification, so the card goes
+  // with it: a "Mark as read" that left the card behind would be a card you
+  // then have to dismiss a second time. Opening the reply field is not yet
+  // dealing with it; sending the reply is.
+  function press(row, button) {
+    if (!store) return
+    if (button.kind === "reply") {
+      replyingKey = row.key
+      return
+    }
+    store.press(row, button)
+    remove(row.key)
+  }
+
+  function sendReply(row, text) {
+    if (store) store.reply(row, text)
+    endReply()
+    remove(row.key)
   }
 
   Process { id: focusProc }
@@ -266,10 +303,12 @@ Panel {
   Component.onCompleted: bindStore()
 
   onOpenedChanged: {
+    if (store) store.watchingPhone = opened
     if (!opened) {
       searching = false
       filter = ""
       search.text = ""
+      replyingKey = ""
       return
     }
     now = Date.now()
@@ -422,9 +461,9 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      // While the search field has the focus it owns every key, including the
-      // ones this would otherwise read as navigation.
-      blocked: root.searching
+      // While the search field or a reply field has the focus it owns every
+      // key, including the ones this would otherwise read as navigation.
+      blocked: root.searching || root.replyingKey !== ""
       onCloseRequested: root.close()
       onMoveRequested: function(dx, dy) { list.flick(0, dy > 0 ? -900 : 900) }
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -599,9 +638,14 @@ Panel {
             showPreview: root.showPreview
             foreground: root.foreground
             fontFamily: root.fontFamily
+            actions: root.actionsFor(row.model)
+            replying: root.replyingKey !== "" && root.replyingKey === model.key
 
             onClicked: root.activate(row.model)
             onRemoveRequested: root.remove(row.model.key)
+            onButtonPressed: function(button) { root.press(row.model, button) }
+            onReplySent: function(text) { root.sendReply(row.model, text) }
+            onReplyCancelled: root.endReply()
           }
         }
 

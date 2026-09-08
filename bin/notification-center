@@ -666,6 +666,111 @@ backfill_previews() {
   printf '%s' "$filled"
 }
 
+# ------------------------------------------------------------------ phone
+#
+# KDE Connect keeps a D-Bus object for every notification still showing on
+# the phone, and it is through that object, not the toast, that the phone
+# can be told to do something: fire one of the notification's buttons,
+# answer a message, clear it. The toast on this side is closed the moment
+# it leaves the screen, so by the time anyone opens the center the only
+# handle left is this one. Everything here talks to kdeconnectd over
+# busctl and prints JSON like the rest of the file.
+
+kdc_bus=org.kde.kdeconnect
+kdc_root=/modules/kdeconnect
+kdc_noti_iface=org.kde.kdeconnect.device.notifications.notification
+
+kdc_call() {
+  busctl --user --json=short --timeout=3 call "$kdc_bus" "$@" 2>/dev/null
+}
+
+# Only a path segment KDE Connect itself would have minted gets near a bus
+# call: device ids are hex, notification ids are a counter.
+kdc_segment() {
+  [[ $1 =~ ^[A-Za-z0-9_]+$ ]]
+}
+
+cmd_phone_list() {
+  command -v busctl >/dev/null 2>&1 || { printf '[]\n'; return; }
+  local devices dev ids id path props
+  devices=$(kdc_call "$kdc_root" org.kde.kdeconnect.daemon devices bb true true \
+    | jq -r '.data[0][]?' 2>/dev/null)
+  if [[ -z $devices ]]; then
+    printf '[]\n'
+    return
+  fi
+  {
+    for dev in $devices; do
+      kdc_segment "$dev" || continue
+      ids=$(kdc_call "$kdc_root/devices/$dev/notifications" \
+        org.kde.kdeconnect.device.notifications activeNotifications \
+        | jq -r '.data[0][]?' 2>/dev/null)
+      for id in $ids; do
+        kdc_segment "$id" || continue
+        path="$kdc_root/devices/$dev/notifications/$id"
+        props=$(kdc_call "$path" org.freedesktop.DBus.Properties GetAll s "$kdc_noti_iface") || continue
+        printf '%s' "$props" | jq -c --arg device "$dev" --arg id "$id" '
+          .data[0] | with_entries(.value = .value.data) | {
+            device: $device,
+            id: $id,
+            internalId: (.internalId // ""),
+            appName: (.appName // ""),
+            title: (.title // ""),
+            text: (.text // ""),
+            ticker: (.ticker // ""),
+            replyId: (.replyId // ""),
+            dismissable: (.dismissable // false)
+          }' 2>/dev/null
+      done
+    done
+  } | jq -s '.'
+}
+
+# phone action DEVICE INTERNAL_ID LABEL: press one of the notification's own
+# buttons. KDE Connect matches the button by its label, which is why the
+# label is what the panel remembers from the toast.
+cmd_phone_action() {
+  local dev=$1 key=$2 action=$3
+  kdc_segment "$dev" || die "bad device id"
+  [[ -n $key && -n $action ]] || die "phone action needs an id and a label"
+  busctl --user --timeout=3 call "$kdc_bus" "$kdc_root/devices/$dev/notifications" \
+    org.kde.kdeconnect.device.notifications sendAction ss "$key" "$action" 2>/dev/null \
+    || die "kdeconnect did not take the action"
+  printf '{"ok":true}\n'
+}
+
+# phone reply DEVICE ID TEXT: answer a message from the panel. Goes through
+# the notification object, which knows its own reply id.
+cmd_phone_reply() {
+  local dev=$1 id=$2 text=$3
+  kdc_segment "$dev" && kdc_segment "$id" || die "bad notification id"
+  [[ -n $text ]] || die "nothing to send"
+  busctl --user --timeout=3 call "$kdc_bus" "$kdc_root/devices/$dev/notifications/$id" \
+    "$kdc_noti_iface" sendReply s "$text" 2>/dev/null \
+    || die "kdeconnect did not take the reply"
+  printf '{"ok":true}\n'
+}
+
+# phone dismiss DEVICE ID: clear it on the phone.
+cmd_phone_dismiss() {
+  local dev=$1 id=$2
+  kdc_segment "$dev" && kdc_segment "$id" || die "bad notification id"
+  busctl --user --timeout=3 call "$kdc_bus" "$kdc_root/devices/$dev/notifications/$id" \
+    "$kdc_noti_iface" dismiss 2>/dev/null \
+    || die "kdeconnect did not dismiss it"
+  printf '{"ok":true}\n'
+}
+
+cmd_phone() {
+  case ${1:-} in
+    list)    cmd_phone_list ;;
+    action)  cmd_phone_action "${2:-}" "${3:-}" "${4:-}" ;;
+    reply)   cmd_phone_reply "${2:-}" "${3:-}" "${4:-}" ;;
+    dismiss) cmd_phone_dismiss "${2:-}" "${3:-}" ;;
+    *)       die "phone: list, action, reply or dismiss" ;;
+  esac
+}
+
 case ${1:-} in
   sync)   shift; quiet=1; cmd_sync; printf '{"ok":true,"synced":true}\n' ;;
   watch)  shift; cmd_watch ;;
@@ -680,6 +785,7 @@ case ${1:-} in
     printf '{"ok":true,"filled":%s}\n' "$(with_lock backfill_previews)"
     ;;
   prune)  shift; ensure_store; with_lock prune; printf '{"ok":true,"pruned":true}\n' ;;
+  phone)  shift; cmd_phone "$@" ;;
   *)
     cat >&2 <<'USAGE'
 notification-center: the store behind the Omarchy notification center
@@ -694,6 +800,13 @@ notification-center: the store behind the Omarchy notification center
   seed [N]           fill the archive with test traffic
   backfill           give older entries the picture their action points at
   prune              apply the retention limits now
+  phone list         notifications still on the phone, via KDE Connect
+  phone action DEVICE INTERNAL_ID LABEL
+                     press one of a phone notification's buttons
+  phone reply DEVICE ID TEXT
+                     answer a message on the phone
+  phone dismiss DEVICE ID
+                     clear a notification on the phone
 USAGE
     exit 64
     ;;

@@ -35,12 +35,28 @@ Item {
   property bool showBody: true
   property bool showPreview: true
   property bool unread: false
+  // What this notification can still do: { buttons: [{kind, label, index}],
+  // canReply, onPhone }, or null for a card that is only there to be read.
+  property var actions: null
+  // Whether the reply field is open on this card. Owned by the panel.
+  property bool replying: false
 
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
 
   signal clicked()
   signal removeRequested()
+  signal buttonPressed(var button)
+  signal replySent(string text)
+  signal replyCancelled()
+
+  readonly property var buttons: actions && actions.buttons ? actions.buttons : []
+  readonly property bool hasButtons: buttons.length > 0
+
+  onReplyingChanged: {
+    if (replying) Qt.callLater(function() { if (root.replying) replyField.forceActiveFocus() })
+    else replyField.text = ""
+  }
 
   readonly property bool hovered: hover.hovered
   // Per-notification media first (an avatar, album art), then the app's own
@@ -365,6 +381,58 @@ Item {
           visible: false
           layer.enabled: true
           layer.smooth: true
+        }
+      }
+
+      // The notification's own buttons, the ones the toast had: Mark as
+      // read, Archive, Like, and a Reply and a Clear when the phone still
+      // holds it. Small and outlined, under the text, where every chat
+      // client puts them. A card with none of them keeps its old shape.
+      Flow {
+        width: parent.width
+        visible: root.hasButtons && !root.replying
+        topPadding: root.hasButtons ? Style.space(6) : 0
+        spacing: Style.space(4)
+
+        Repeater {
+          model: root.buttons
+
+          Button {
+            required property var modelData
+            text: modelData.label
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            horizontalPadding: Style.space(8)
+            verticalPadding: Style.space(2)
+            onClicked: root.buttonPressed(modelData)
+          }
+        }
+      }
+
+      // The reply, typed here and sent to the phone. Enter sends, Escape
+      // puts the buttons back.
+      Item {
+        width: parent.width
+        visible: root.replying
+        height: root.replying ? replyField.implicitHeight + Style.space(6) : 0
+
+        TextField {
+          id: replyField
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          placeholderText: "Reply\u2026"
+          foreground: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          verticalPadding: Style.space(4)
+          onAccepted: {
+            var message = text.trim()
+            if (message !== "") root.replySent(message)
+          }
+          Keys.onEscapePressed: root.replyCancelled()
         }
       }
     }
