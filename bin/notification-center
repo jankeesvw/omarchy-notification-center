@@ -359,31 +359,14 @@ prune() {
   while IFS= read -r key; do
     [[ -n $key ]] || continue
     rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
-    # The source file too. It was the service's copy of something this archive
-    # now no longer has, so there is nothing left that would show it again.
-    rm -f -- "$src_history/$key.json"
+    # Keep the source history JSON. This archive may be running alongside the
+    # shell's own first-party notification store, whose replay reads those
+    # files; removing them would silently break that replay.
   done <<< "$dropped"
 
-  # And the source files under the clear line. Clear draws that line instead of
-  # deleting anything, which leaves the tidying to happen here: the archive has
-  # these, nothing is going to show them again, and this directory is not
-  # cleaned by anybody else. Doing it on the retention pass rather than on the
-  # click is the whole point, because a click that deletes is a click you have
-  # to be sure about.
-  if [[ -s $cleared_at_file ]]; then
-    local cleared_at f base stamp
-    cleared_at=$(cat "$cleared_at_file" 2>/dev/null || echo 0)
-    if [[ $cleared_at =~ ^[0-9]+$ ]] && (( cleared_at > 0 )); then
-      for f in "$src_history"/*.json; do
-        [[ -e $f ]] || continue
-        base=${f##*/}
-        base=${base%.json}
-        stamp=${base%%-*}
-        [[ $stamp =~ ^[0-9]+$ ]] || continue
-        (( stamp <= cleared_at )) && rm -f -- "$f"
-      done
-    fi
-  fi
+  # Source files under the clear line are left in place for the same reason:
+  # cleared_at already hides those rows from this archive, so there is no need
+  # to delete the underlying JSON the shell may still replay from.
 }
 
 # ---------------------------------------------------------------- commands
@@ -477,10 +460,9 @@ remove_key() {
   grep -vF "\"key\":\"$key\"" "$archive" > "$archive.tmp" 2>/dev/null || : > "$archive.tmp"
   mv -f "$archive.tmp" "$archive"
   rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
-  # Both directories, not only history: a notification dismissed while its
-  # toast is still on screen is sitting in the popup directory, and leaving it
-  # there means the move into history archives it again a moment later.
-  rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
+  # Keep the source popup/history JSON. dismiss (via is_dismissed/dismissed_file)
+  # already stops re-ingest, but the shell's first-party replay still reads
+  # those files, so deleting them would break it.
 }
 
 cmd_remove() {
