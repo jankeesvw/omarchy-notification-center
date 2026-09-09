@@ -150,7 +150,7 @@ copy_image() {
     # nobody asked for; at panel width they are a fifth of that, and the
     # original is still where it always was.
     if [[ $slot == preview ]] && command -v magick >/dev/null 2>&1; then
-      magick "$dest.tmp" -auto-orient -resize '720x720>' -quality 82 "$dest.resized" 2>/dev/null \
+      timeout 8 magick "$dest.tmp" -auto-orient -resize '720x720>' -quality 82 "$dest.resized" 2>/dev/null \
         && mv -f -- "$dest.resized" "$dest.tmp"
       rm -f -- "$dest.resized"
     fi
