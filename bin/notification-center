@@ -168,13 +168,9 @@ copy_image() {
 # instead, so clicking the toast opens it. That path is the only place the
 # picture is named, so this is where a motion alert gets its thumbnail.
 #
-# This is also the allowlist for what a click on an archived notification is
-# allowed to open, and the reason it is this narrow. The action a notification
-# arrives with is chosen by whoever sent the notification, and anything on the
-# machine can send one. Keeping that action and running it later is handing an
-# attacker a command that fires whenever somebody clicks a row, so it is never
-# kept. What is kept is at most an absolute path to an image, taken out of the
-# action and opened by argument rather than by shell.
+# This extracts an image for the preview and for older rows without a stored
+# argv. It does not decide which action a click may run; the panel validates
+# execArgv with the same structural rules as Omarchy's notification service.
 #
 # Two shapes arrive here. Omarchy now sends the action as `omarchy-exec-argv`,
 # a JSON vector whose elements are already discrete arguments, so a candidate
@@ -253,9 +249,7 @@ ingest_file() {
   is_path "$app_icon" && icon_copy=$(copy_image "$app_icon" "$key" "appIcon")
   is_path "$image_src" && image_copy=$(copy_image "$image_src" "$key" "image")
 
-  # The path the action pointed at, if it pointed at an image. This is what a
-  # click opens; the command it came out of is discarded here and never
-  # reaches the archive.
+  # Keep the image path for previews and for rows without a runnable argv.
   file_src=$(preview_source "$exec_src")
   file_src=${file_src#file://}
 
@@ -279,6 +273,7 @@ ingest_file() {
        image: $image,
        preview: $preview,
        file: $file,
+       execArgv: (.execArgv // ""),
        glyph: (.glyph // ""),
        urgency: (.urgency // 1),
        timestamp: (.timestamp // 0)
