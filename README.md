@@ -54,6 +54,7 @@ icon and all, and keeps it for 30 days.
 | Clicking a notification | Auto | Opens the picture, or focuses the app. Or neither. |
 | Show the message text | on | Off leaves the sender and subject only. |
 | Show pictures | on | Off stops keeping copies as well. |
+| Use system corner radius | off | Round cards with the shell's corner radius instead of the built-in card radius. |
 | Panel width | 420 | In the shell's spacing units. |
 | List height | 0 | 0 runs the list to the bottom of the screen. |
 
