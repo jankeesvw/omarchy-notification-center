@@ -159,8 +159,54 @@ Panel {
     if (store) store.remove(key)
   }
 
+  // --------------------------------------------------------------- clearing
+  //
+  // Clear sweeps the cards off toward the edge of the screen, top to bottom,
+  // and only then tells the store. A list that simply vanishes reads as a
+  // glitch as easily as a result; one that leaves in the direction the panel
+  // came from reads as the thing you asked for, being done.
+  //
+  // The wave is spread over the same time however many cards are showing, so a
+  // short list clears at the same pace as a full one, and cards scrolled out of
+  // view are not waited for: they are clipped anyway.
+  property bool clearing: false
+  // True for the moment after the store empties, while the card shrinks down
+  // to the empty state instead of snapping to it.
+  property bool collapsing: false
+  readonly property int sweepSpread: 220
+  readonly property int sweepDuration: 260
+
+  function sweepDelay(item) {
+    var offset = (item.y - list.contentY) / Math.max(1, list.height)
+    return Math.round(Math.max(0, Math.min(offset, 1)) * sweepSpread)
+  }
+
   function clearAll() {
-    if (store) store.clearAll()
+    if (!store || clearing) return
+    // Nothing on screen to animate: a closed panel, or a search with no hits.
+    if (!root.opened || rows.count === 0) {
+      store.clearAll()
+      return
+    }
+    clearing = true
+    commitClear.restart()
+  }
+
+  Timer {
+    id: commitClear
+    interval: root.sweepSpread + root.sweepDuration
+    onTriggered: {
+      root.collapsing = true
+      if (root.store) root.store.clearAll()
+      root.clearing = false
+      settleClear.restart()
+    }
+  }
+
+  Timer {
+    id: settleClear
+    interval: 280
+    onTriggered: root.collapsing = false
   }
 
   function handleEntryAdded(entry) {
@@ -402,9 +448,19 @@ Panel {
     // usableCardHeight below), so the same fit is done here against the
     // corrected ceiling: the content plus the card insets, never taller than
     // the space the screen actually has.
-    contentHeight: Math.round(Math.min(
+    contentHeight: Math.round(fittedHeight)
+
+    property real fittedHeight: Math.min(
       Math.max(popup.verticalContentInset, content.implicitHeight + popup.verticalContentInset),
-      popup.usableCardHeight))
+      popup.usableCardHeight)
+
+    // Only after a clear: everywhere else the card follows its content
+    // exactly, and a list that eased its height every time a notification
+    // arrived would never be the size it says it is.
+    Behavior on fittedHeight {
+      enabled: root.collapsing
+      NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+    }
 
     // The stock omarchy bar window is only as tall as the bar strip, so the
     // screen minus that window is the space a panel has. Shibumi draws its
@@ -502,7 +558,7 @@ Panel {
               foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
-              enabled: root.entries.length > 0
+              enabled: root.entries.length > 0 && !root.clearing
               onClicked: root.clearAll()
             }
           }
@@ -567,6 +623,34 @@ Panel {
             width: list.width - list.lane
             height: dayLabel.implicitHeight + Style.space(14)
 
+            // Leaves with the cards filed under it, so a heading is never left
+            // standing over nothing.
+            transform: Translate { id: sectionShift }
+
+            Connections {
+              target: root
+              function onClearingChanged() {
+                if (!root.clearing) return
+                sectionPause.duration = root.sweepDelay(daySection)
+                sectionSweep.restart()
+              }
+            }
+
+            SequentialAnimation {
+              id: sectionSweep
+              PauseAnimation { id: sectionPause }
+              ParallelAnimation {
+                NumberAnimation {
+                  target: sectionShift; property: "x"; to: daySection.width * 0.4
+                  duration: root.sweepDuration; easing.type: Easing.InCubic
+                }
+                NumberAnimation {
+                  target: daySection; property: "opacity"; to: 0
+                  duration: root.sweepDuration
+                }
+              }
+            }
+
             PanelSectionHeader {
               id: dayLabel
               anchors.left: parent.left
@@ -602,6 +686,34 @@ Panel {
 
             onClicked: root.activate(row.model)
             onRemoveRequested: root.remove(row.model.key)
+
+            // Accelerating away rather than easing out: the card is being
+            // thrown off the edge, not set down somewhere.
+            transform: Translate { id: rowShift }
+
+            Connections {
+              target: root
+              function onClearingChanged() {
+                if (!root.clearing) return
+                rowPause.duration = root.sweepDelay(row)
+                rowSweep.restart()
+              }
+            }
+
+            SequentialAnimation {
+              id: rowSweep
+              PauseAnimation { id: rowPause }
+              ParallelAnimation {
+                NumberAnimation {
+                  target: rowShift; property: "x"; to: row.width * 0.4
+                  duration: root.sweepDuration; easing.type: Easing.InCubic
+                }
+                NumberAnimation {
+                  target: row; property: "opacity"; to: 0
+                  duration: root.sweepDuration
+                }
+              }
+            }
           }
         }
 
@@ -622,6 +734,17 @@ Panel {
           font.pixelSize: Style.font.caption
           color: root.foreground
           opacity: 0.55
+
+          // After a clear the empty state arrives as the card shrinks around
+          // it, rather than being there already when the last card leaves.
+          onVisibleChanged: if (visible && root.collapsing) emptyFade.restart()
+
+          NumberAnimation on opacity {
+            id: emptyFade
+            running: false
+            from: 0; to: 0.55
+            duration: 240; easing.type: Easing.OutCubic
+          }
         }
 
         // ---------------------------------------------------------- foot
@@ -639,7 +762,10 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           color: root.foreground
-          opacity: 0.4
+          // The count goes as the sweep starts: it is about to be wrong.
+          opacity: root.clearing ? 0 : 0.4
+
+          Behavior on opacity { NumberAnimation { duration: 160 } }
         }
       }
     }
