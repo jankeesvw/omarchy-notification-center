@@ -296,13 +296,16 @@ Item {
 
       // Two lines of message and no more. Long enough to tell you whether you
       // need to go and open the thing, short enough that one chatty app cannot
-      // push a day of notifications off the bottom of the panel.
+      // push a day of notifications off the bottom of the panel. A line of
+      // JSON can go wider than the card without one place to break, and word
+      // wrap alone lets it run straight out of it, so it breaks mid-word when
+      // it must.
       Text {
         textFormat: Text.PlainText
         width: parent.width
         visible: root.showBody && root.cleanBody !== ""
         text: root.cleanBody
-        wrapMode: Text.WordWrap
+        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         elide: Text.ElideRight
         maximumLineCount: 2
         font.family: root.fontFamily
