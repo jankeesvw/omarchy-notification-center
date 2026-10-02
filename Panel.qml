@@ -6,6 +6,7 @@ import qs.Commons
 import qs.Ui
 
 import "components"
+import "Store.js" as Store
 
 // A notification center for Omarchy: everything you were sent, still there
 // when you go back for it.
@@ -57,11 +58,16 @@ Panel {
   // exactly the machines that cared enough to clone it.
   readonly property var notificationService: {
     var host = bar && bar.shell ? bar.shell : null
-    if (!host || typeof host.serviceFor !== "function") return null
-    var id = "omarchy.notifications"
-    if (host.pluginRegistry && typeof host.pluginRegistry.resolveEnabledId === "function")
-      id = host.pluginRegistry.resolveEnabledId(id)
-    return host.serviceFor(id)
+    if (host && typeof host.serviceFor === "function") {
+      var id = "omarchy.notifications"
+      if (host.pluginRegistry && typeof host.pluginRegistry.resolveEnabledId === "function")
+        id = host.pluginRegistry.resolveEnabledId(id)
+      var s = host.serviceFor(id)
+      if (s) return s
+    }
+    // A facade without services, or a third-party entry the shell will not
+    // hand the built-in service to: take the bridge the archive holds.
+    return store && store.notifications ? store.notifications : null
   }
 
   readonly property bool dnd: notificationService ? notificationService.doNotDisturb : false
@@ -83,8 +89,10 @@ Panel {
       return
     }
     var host = bar && bar.shell ? bar.shell : null
-    if (!host || typeof host.serviceFor !== "function") return
-    var s = host.serviceFor("jankeesvw.notification-center")
+    var s = host && typeof host.serviceFor === "function"
+      ? host.serviceFor("jankeesvw.notification-center") : null
+    // Replacement bars hand widgets a service-less facade; see Store.js.
+    if (!s) s = Store.get()
     if (!s) return
     store = s
     pushSettings()
