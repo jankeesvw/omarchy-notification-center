@@ -75,7 +75,7 @@
           "Nothing"
         ],
         "defaultValue": "Auto",
-        "description": "Auto opens the picture a notification pointed at, a camera frame or a screenshot, and otherwise focuses the app that sent it. It never runs the command the notification arrived with: that command is chosen by whoever sent the notification, and a stored one is an attacker's command waiting for a click. Focus the app skips the file as well, and Nothing makes the list read-only."
+        "description": "Auto runs a stored Omarchy argv action when present, then opens the picture or focuses the app as a fallback. Focus the app skips the action and picture. Nothing makes the list read-only."
       },
       {
         "key": "showBody",

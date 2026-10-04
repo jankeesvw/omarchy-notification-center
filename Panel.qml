@@ -203,6 +203,7 @@ Panel {
       image: String(entry.image || ""),
       preview: String(entry.preview || ""),
       file: String(entry.file || ""),
+      execArgv: String(entry.execArgv || ""),
       glyph: String(entry.glyph || ""),
       urgency: Number(entry.urgency || 0),
       timestamp: Number(entry.timestamp || 0),
@@ -238,18 +239,32 @@ Panel {
 
   // --------------------------------------------------------------- activating
 
-  // What a click on an old notification should do.
-  //
-  // Not what the notification asked for. A notification arrives carrying a
-  // shell command, chosen by whoever sent it, and anything on this machine can
-  // send one. Keeping that command and running it later is an attacker's
-  // command waiting for a click, which is worth nothing next to the one thing
-  // people actually want back: the picture. So what the store keeps is at most
-  // an absolute path to an image, and that is opened by argument rather than
-  // through a shell, so a hostile path is a file that fails to open instead of
-  // a command that runs.
+  // Match NotificationLogic.parseExecArgv in Omarchy's notifications plugin.
+  // This panel lives in a separate plugin directory, so it cannot import that
+  // plugin's relative JS module. Keep the validation structural, as the daemon
+  // does: any session-bus sender may set this hint.
+  function parseExecArgv(value) {
+    var text = String(value || "")
+    if (!text) return null
+    var parsed
+    try { parsed = JSON.parse(text) } catch (e) { return null }
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    for (var i = 0; i < parsed.length; i++)
+      if (typeof parsed[i] !== "string") return null
+    if (!parsed[0] || parsed[0].charAt(0) === "-") return null
+    return parsed
+  }
+
   function activate(row) {
     if (!row || clickAction === "Nothing") return
+    if (clickAction === "Auto") {
+      var argv = parseExecArgv(row.execArgv)
+      if (argv) {
+        Util.execArgv(argv)
+        root.close()
+        return
+      }
+    }
     if (clickAction === "Auto" && row.file !== "") {
       Quickshell.execDetached(["xdg-open", row.file])
       root.close()
