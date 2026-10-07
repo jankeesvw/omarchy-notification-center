@@ -39,6 +39,7 @@ archive="$store/archive.jsonl"
 images="$store/images"
 seen_file="$store/seen"
 lock_file="$store/lock"
+watcher_pidfile="$store/watcher.pid"
 dismissed_file="$store/dismissed"
 cleared_at_file="$store/cleared_at"
 
@@ -417,6 +418,26 @@ disarm_archive() {
   backfill_previews >/dev/null
 }
 
+# A reload that lands on the watch script mid-ingest escalates to SIGKILL, and
+# SIGKILL beats any trap: the watcher keeps its watch, adopted by systemd
+# --user, blind weight until something kills it. Each generation leaves its
+# watcher's pid behind; the next one retires the recorded pids whose parent is
+# no longer a live copy of this script.
+reap_stale_watcher() {
+  local stale ppid owner
+  [[ -s $watcher_pidfile ]] || return 0
+  while IFS= read -r stale; do
+    [[ $stale =~ ^[0-9]+$ ]] || continue
+    [[ -d /proc/$stale ]] || continue
+    tr '\0' ' ' < "/proc/$stale/cmdline" 2>/dev/null | grep -q inotifywait || continue
+    ppid=$(awk '/^PPid:/{print $2}' "/proc/$stale/status" 2>/dev/null)
+    [[ -n $ppid ]] || continue
+    owner=$(tr '\0' ' ' < "/proc/$ppid/cmdline" 2>/dev/null)
+    [[ $owner == *notification-center* ]] || kill "$stale" 2>/dev/null
+  done < "$watcher_pidfile"
+  : > "$watcher_pidfile"
+}
+
 cmd_watch() {
   ensure_store
   mkdir -p "$src_dir" "$src_history"
@@ -424,20 +445,27 @@ cmd_watch() {
   # whatever arrived in the meantime is still lying in those directories.
   cmd_sync
 
+  reap_stale_watcher
+
   command -v inotifywait >/dev/null 2>&1 || die "inotifywait is not installed"
 
   # close_write catches a popup being written, moved_to catches it being
   # archived. The same notification arrives twice that way and the second one
   # is dropped by the key check, which is cheaper than trying to be clever
   # about which of the two events to listen for.
-  # Read through a descriptor rather than a pipeline, so the watcher has a pid
-  # this script can kill. Piped into a `while` loop it would be orphaned every
-  # time the shell reloads its plugins, and a day of reloads is a day of stray
-  # inotifywait processes.
-  exec 3< <(inotifywait -m -q -e close_write -e moved_to --format '%w%f' \
-    "$src_dir" "$src_history" 2>/dev/null)
-  watcher=$!
+  # The watcher runs as a coprocess and the trap is armed before it starts, so
+  # a reload landing between spawn and setup still finds a kill in place. An
+  # earlier form read a process substitution through a descriptor; its `$!`
+  # named the intermediate shell, and a reload that escalated to SIGKILL left
+  # the real inotifywait watching forever, adopted by systemd --user, one
+  # stray per reload until the next notification SIGPIPEd the pile down.
+  # SIGKILL still beats any trap, which is what the pid-file reap is for.
   trap 'kill "$watcher" 2>/dev/null' EXIT INT TERM
+  coproc NC { exec inotifywait -m -q -e close_write -e moved_to --format '%w%f' \
+    "$src_dir" "$src_history" 2>/dev/null; }
+  watcher=$NC_PID
+  exec 3<&"${NC[0]}"
+  printf '%s\n' "$watcher" > "$watcher_pidfile"
 
   while IFS= read -r file <&3; do
     [[ $file == *.json ]] || continue
