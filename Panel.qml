@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 import "components"
@@ -35,7 +36,7 @@ Panel {
 
   readonly property string omarchyPath: Quickshell.env("OMARCHY_PATH")
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // ----------------------------------------------------------------- settings
@@ -315,7 +316,7 @@ Panel {
     // it. Accent instead of the inherited urgent, because unread mail is not
     // an emergency.
     active: root.badge === "Highlight" && root.unread > 0
-    activeColor: Color.accent
+    activeColor: Commons.Color.accent
     tooltipText: {
       if (root.dnd) return root.unread > 0
         ? "Silenced · " + root.unread + " new" : "Notifications silenced"
@@ -359,7 +360,7 @@ Panel {
     width: Style.space(6)
     height: width
     radius: width / 2
-    color: Color.accent
+    color: Commons.Color.accent
   }
 
   Rectangle {
@@ -372,7 +373,7 @@ Panel {
     width: Math.max(countText.implicitWidth + Style.space(6), Style.space(12))
     height: Style.space(12)
     radius: height / 2
-    color: Color.accent
+    color: Commons.Color.accent
 
     Text {
       textFormat: Text.PlainText
@@ -384,7 +385,7 @@ Panel {
       font.family: root.fontFamily
       font.pixelSize: Math.max(8, Style.font.caption - Style.space(3))
       font.bold: true
-      color: Color.background
+      color: Commons.Color.background
     }
   }
 
@@ -484,7 +485,7 @@ Panel {
               // U+F0349, nf-md-magnify.
               iconText: "\uDB80\uDF49"
               tooltipText: "Search these notifications  ( / )"
-              foreground: root.searching ? Color.accent : root.foreground
+              foreground: root.searching ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               visible: root.entries.length > 0
               onClicked: root.searching ? root.endSearch() : root.startSearch()
@@ -494,7 +495,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               iconText: root.dnd ? "\uDB80\uDC9B" : "\uDB80\uDC9A"
               tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
-              foreground: root.dnd ? Color.accent : root.foreground
+              foreground: root.dnd ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               enabled: root.notificationService !== null
               onClicked: root.toggleDnd()
