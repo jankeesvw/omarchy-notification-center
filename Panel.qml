@@ -8,6 +8,7 @@ import qs.Ui
 
 import "components"
 import "Store.js" as Store
+import "lib/SlackLink.js" as SlackLink
 
 // A notification center for Omarchy: everything you were sent, still there
 // when you go back for it.
@@ -35,6 +36,9 @@ Panel {
   ipcTarget: "jankeesvw.notification-center"
 
   readonly property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  readonly property string slackLogPath:
+    (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config")
+    + "/Slack/logs/default/browser.log"
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -261,13 +265,42 @@ Panel {
     // itself ".*" would focus whichever window that hit first. Only something
     // shaped like a name gets through.
     if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(row.app)) return
-    // Chat apps rarely register an action and simply expect a click to bring
-    // their window up. This is the helper the notification service uses for
-    // the same fallback, so a click here lands where a click on the toast
-    // would have.
-    focusProc.command = [root.omarchyPath + "/bin/omarchy-hyprland-focus-app", row.app]
-    focusProc.running = true
+    // Slack gets one step more: the conversation the notification was about,
+    // looked up in Slack's own log by lib/SlackLink.js. Whatever that cannot
+    // place is focused like everything else.
+    if (clickAction === "Auto" && row.app.toLowerCase() === "slack") {
+      slackLog.app = row.app
+      slackLog.stamp = row.timestamp
+      slackLog.path = root.slackLogPath
+      root.close()
+      return
+    }
+    focusApp(row.app)
     root.close()
+  }
+
+  // Chat apps rarely register an action and simply expect a click to bring
+  // their window up. This is the helper the notification service uses for the
+  // same fallback, so a click here lands where a click on the toast would have.
+  function focusApp(app) {
+    focusProc.command = [root.omarchyPath + "/bin/omarchy-hyprland-focus-app", app]
+    focusProc.running = true
+  }
+
+  // Read on click and let go straight after: the log runs to megabytes.
+  FileView {
+    id: slackLog
+    property string app: ""
+    property double stamp: 0
+    printErrors: false
+    onLoaded: root.openSlack(SlackLink.resolve(text(), stamp))
+    onLoadFailed: root.openSlack("")
+  }
+
+  function openSlack(url) {
+    slackLog.path = ""
+    focusApp(slackLog.app)
+    if (url !== "") Qt.openUrlExternally(url)
   }
 
   // ---------------------------------------------------------------- lifecycle
