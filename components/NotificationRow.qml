@@ -3,6 +3,7 @@ import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "AppIcons.js" as AppIcons
 
 // One notification, as it reads after the fact.
 //
@@ -44,8 +45,14 @@ Item {
 
   readonly property bool hovered: hover.hovered
   // Per-notification media first (an avatar, album art), then the app's own
-  // icon. Both may be missing, and the fallback below covers that.
-  readonly property string iconSource: image !== "" ? resolve(image) : resolve(appIcon)
+  // icon, then the icon of the desktop entry that shares its name. Any of the
+  // three may be missing, and the fallback below covers that.
+  readonly property string iconSource: {
+    if (image !== "") return resolve(image)
+    var own = resolve(appIcon)
+    if (own !== "") return own
+    return resolve(AppIcons.lookup(app, DesktopEntries.applications ? DesktopEntries.applications.values : []))
+  }
   readonly property bool hasIcon: iconSource !== "" && icon.status !== Image.Error
   readonly property string initial: app === "" ? "?" : app.charAt(0).toUpperCase()
   readonly property bool hasPreview: showPreview && preview !== "" && previewImage.status !== Image.Error

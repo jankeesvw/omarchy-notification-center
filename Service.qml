@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "components/AppIcons.js" as AppIcons
 
 import "Store.js" as Store
 
@@ -256,5 +257,14 @@ Item {
     id: reloadAfterSeed
     interval: 600
     onTriggered: root.load()
+  }
+
+  // The name-to-icon index a row falls back on is a snapshot of the desktop
+  // entries, so it is thrown away whenever an app is installed or removed.
+  // Here rather than on the row, for the same reason the watcher is: one
+  // index for the shell, not one per monitor.
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() { AppIcons.reset() }
   }
 }
