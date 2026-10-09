@@ -36,6 +36,9 @@ Panel {
   ipcTarget: "jankeesvw.notification-center"
 
   readonly property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  readonly property string slackLogPath:
+    (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config")
+    + "/Slack/logs/default/browser.log"
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -283,10 +286,6 @@ Panel {
     focusProc.command = [root.omarchyPath + "/bin/omarchy-hyprland-focus-app", app]
     focusProc.running = true
   }
-
-  readonly property string slackLogPath:
-    (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config")
-    + "/Slack/logs/default/browser.log"
 
   // Read on click and let go straight after: the log runs to megabytes.
   FileView {
