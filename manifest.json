@@ -29,7 +29,8 @@
       "maxItems": 1000,
       "clickAction": "Auto",
       "showBody": true,
-      "showPreview": true
+      "showPreview": true,
+      "useSystemCornerRadius": false
     },
     "schema": [
       {
@@ -90,6 +91,13 @@
         "label": "Show pictures",
         "defaultValue": true,
         "description": "Notifications that are about a picture, a camera catching movement or a screenshot that was just taken, show it in the panel. Off keeps the text and leaves the picture where it was; the archive stops keeping copies of new ones as well."
+      },
+      {
+        "key": "useSystemCornerRadius",
+        "type": "boolean",
+        "label": "Use system corner radius",
+        "defaultValue": false,
+        "description": "Round notification cards with the shell's corner radius (Hyprland's decoration:rounding) instead of the built-in card radius. Off keeps the default card shape."
       },
       {
         "key": "panelWidth",

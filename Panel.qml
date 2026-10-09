@@ -48,6 +48,7 @@ Panel {
   readonly property string clickAction: setting("clickAction", "Auto")
   readonly property bool showBody: setting("showBody", true)
   readonly property bool showPreview: setting("showPreview", true)
+  readonly property bool useSystemCornerRadius: setting("useSystemCornerRadius", false)
 
   // ------------------------------------------------------------- the service
   //
@@ -605,6 +606,7 @@ Panel {
             unread: model.timestamp > root.readMark
             showBody: root.showBody
             showPreview: root.showPreview
+            useSystemCornerRadius: root.useSystemCornerRadius
             foreground: root.foreground
             fontFamily: root.fontFamily
 
