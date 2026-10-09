@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Effects
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // One notification, as it reads after the fact.
@@ -36,7 +37,7 @@ Item {
   property bool showPreview: true
   property bool unread: false
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
 
   signal clicked()
@@ -127,7 +128,7 @@ Item {
       anchors.margins: Style.space(6)
       width: Style.space(3)
       radius: width / 2
-      color: Color.urgent
+      color: Commons.Color.urgent
     }
 
     MouseArea {
@@ -383,7 +384,7 @@ Item {
       width: Style.space(5)
       height: width
       radius: width / 2
-      color: Color.accent
+      color: Commons.Color.accent
     }
   }
 }
