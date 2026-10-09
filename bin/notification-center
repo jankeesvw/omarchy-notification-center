@@ -570,6 +570,7 @@ readonly SEED_ROWS=(
   "omasnap||Screenshot saved and copied|Click to edit|2|1"
   "Camera||Motion at the back door|17:41|9|1"
   "Slack|slack|#design from Mara|Pushed the new empty state, have a look when you get a minute|4"
+  "Uptime Kuma||api is up|{\"monitor\":\"api\",\"status\":\"up\",\"ping_ms\":42,\"region\":\"fsn1\",\"attempt\":1,\"url\":\"https://api.nova.dev/health\"}|7"
   "Spotify|spotify|Talk Talk|Life's What You Make It|12"
   "Chromium|chromium|Calendar|Standup starts in 10 minutes|38"
   "Signal|signal-desktop|Jules|Are we still on for Thursday?|55"

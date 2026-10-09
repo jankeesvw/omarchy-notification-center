@@ -3,9 +3,11 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 import "components"
+import "Store.js" as Store
 import "lib/SlackLink.js" as SlackLink
 
 // A notification center for Omarchy: everything you were sent, still there
@@ -35,7 +37,7 @@ Panel {
 
   readonly property string omarchyPath: Quickshell.env("OMARCHY_PATH")
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // ----------------------------------------------------------------- settings
@@ -58,11 +60,16 @@ Panel {
   // exactly the machines that cared enough to clone it.
   readonly property var notificationService: {
     var host = bar && bar.shell ? bar.shell : null
-    if (!host || typeof host.serviceFor !== "function") return null
-    var id = "omarchy.notifications"
-    if (host.pluginRegistry && typeof host.pluginRegistry.resolveEnabledId === "function")
-      id = host.pluginRegistry.resolveEnabledId(id)
-    return host.serviceFor(id)
+    if (host && typeof host.serviceFor === "function") {
+      var id = "omarchy.notifications"
+      if (host.pluginRegistry && typeof host.pluginRegistry.resolveEnabledId === "function")
+        id = host.pluginRegistry.resolveEnabledId(id)
+      var s = host.serviceFor(id)
+      if (s) return s
+    }
+    // A facade without services, or a third-party entry the shell will not
+    // hand the built-in service to: take the bridge the archive holds.
+    return store && store.notifications ? store.notifications : null
   }
 
   readonly property bool dnd: notificationService ? notificationService.doNotDisturb : false
@@ -84,8 +91,10 @@ Panel {
       return
     }
     var host = bar && bar.shell ? bar.shell : null
-    if (!host || typeof host.serviceFor !== "function") return
-    var s = host.serviceFor("jankeesvw.notification-center")
+    var s = host && typeof host.serviceFor === "function"
+      ? host.serviceFor("jankeesvw.notification-center") : null
+    // Replacement bars hand widgets a service-less facade; see Store.js.
+    if (!s) s = Store.get()
     if (!s) return
     store = s
     pushSettings()
@@ -341,7 +350,7 @@ Panel {
     // it. Accent instead of the inherited urgent, because unread mail is not
     // an emergency.
     active: root.badge === "Highlight" && root.unread > 0
-    activeColor: Color.accent
+    activeColor: Commons.Color.accent
     tooltipText: {
       if (root.dnd) return root.unread > 0
         ? "Silenced · " + root.unread + " new" : "Notifications silenced"
@@ -385,7 +394,7 @@ Panel {
     width: Style.space(6)
     height: width
     radius: width / 2
-    color: Color.accent
+    color: Commons.Color.accent
   }
 
   Rectangle {
@@ -398,7 +407,7 @@ Panel {
     width: Math.max(countText.implicitWidth + Style.space(6), Style.space(12))
     height: Style.space(12)
     radius: height / 2
-    color: Color.accent
+    color: Commons.Color.accent
 
     Text {
       textFormat: Text.PlainText
@@ -410,7 +419,7 @@ Panel {
       font.family: root.fontFamily
       font.pixelSize: Math.max(8, Style.font.caption - Style.space(3))
       font.bold: true
-      color: Color.background
+      color: Commons.Color.background
     }
   }
 
@@ -510,7 +519,7 @@ Panel {
               // U+F0349, nf-md-magnify.
               iconText: "\uDB80\uDF49"
               tooltipText: "Search these notifications  ( / )"
-              foreground: root.searching ? Color.accent : root.foreground
+              foreground: root.searching ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               visible: root.entries.length > 0
               onClicked: root.searching ? root.endSearch() : root.startSearch()
@@ -520,7 +529,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               iconText: root.dnd ? "\uDB80\uDC9B" : "\uDB80\uDC9A"
               tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
-              foreground: root.dnd ? Color.accent : root.foreground
+              foreground: root.dnd ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               enabled: root.notificationService !== null
               onClicked: root.toggleDnd()

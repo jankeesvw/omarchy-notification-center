@@ -2,6 +2,8 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
+import "Store.js" as Store
+
 // The archive, mounted once for the shell.
 //
 // Omarchy builds a bar per monitor. If the watcher and the in-memory list
@@ -31,6 +33,34 @@ Item {
   property bool loaded: false
 
   readonly property bool watching: watchProc.running
+
+  // Do Not Disturb, for panels the shell gives no route to
+  // omarchy.notifications: a third-party entry is only handed its own service.
+  // Read from the state file that service writes back on every change, and set
+  // through its IPC target, so a toggle from anywhere else shows up here too.
+  readonly property QtObject notifications: dndBridge
+
+  QtObject {
+    id: dndBridge
+    property bool doNotDisturb: false
+
+    function setDoNotDisturb(value) {
+      doNotDisturb = !!value
+      Quickshell.execDetached(["omarchy-shell", "notifications", "setDnd", value ? "on" : "off"])
+    }
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/notifications.json"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        dndBridge.doNotDisturb = JSON.parse(text()).dnd === true
+      } catch (e) {
+      }
+    }
+  }
 
   readonly property int unread: {
     var count = 0
@@ -183,9 +213,12 @@ Item {
   Process { id: markProc; environment: root.storeEnvironment }
 
   Component.onCompleted: {
+    Store.set(root)
     readSeen()
     load()
   }
+
+  Component.onDestruction: Store.clear(root)
 
   IpcHandler {
     target: "jankeesvw.notification-center.test"
@@ -213,7 +246,8 @@ Item {
         unread: root.unread,
         watching: watchProc.running,
         loaded: root.loaded,
-        lastSeen: root.lastSeen
+        lastSeen: root.lastSeen,
+        dnd: dndBridge.doNotDisturb
       })
     }
   }
