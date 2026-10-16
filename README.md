@@ -45,6 +45,15 @@ icon and all, and keeps it for 30 days.
   spot. Nothing is destroyed by a click, so nothing has to be confirmed.
 - **The bell in the header** is Do Not Disturb, the same switch as the bar's.
   Right-clicking the bell in the bar does it without opening anything.
+- **The phone beside the bell** mutes notifications mirrored from your phone,
+  and only those. KDE Connect, GSConnect and Valent send every notification
+  from the phone under their own name, so that name is how one is recognised;
+  the desktop's own notifications keep coming and Do Not Disturb is left as it
+  was. A muted one is still kept here, so nothing is lost, only not shown.
+  The phone is there when a bridge is running on the session bus or one of
+  its notifications has been kept, and stays while muted so it can always be
+  turned back; `p` does the same with the panel open. Details under
+  [Muting the phone](#muting-the-phone).
 - **The magnifier**, or `/`, searches everything kept. Escape leaves the
   search, Escape again closes the panel.
 - **No grouping**, on purpose. Ten identical messages are ten cards, not one card with a ×10 on it. A stack hides when each one arrived, and the newest one on top hides whether an older one was urgent. If an app sends the same thing ten times, that is worth seeing as it is.
@@ -59,8 +68,45 @@ icon and all, and keeps it for 30 days.
 | Clicking a notification | Auto | Opens the picture or the Slack conversation, or focuses the app. Or neither. |
 | Show the message text | on | Off leaves the sender and subject only. |
 | Show pictures | on | Off stops keeping copies as well. |
+| Phone notifications come from | KDE Connect, GSConnect, Valent | App names, comma separated, that the phone button mutes. Case, spaces and dots are ignored. Empty means the default. |
 | Panel width | 420 | In the shell's spacing units. |
 | List height | 0 | 0 runs the list to the bottom of the screen. |
+
+## Muting the phone
+
+Omarchy's notification service gives a plugin no say over which toasts it
+shows, so the mute works one step later. The service writes each toast to disk
+as it appears; the archive is already watching that directory, and when a
+phone notification lands while the phone is muted, it is archived and then
+taken straight back off the screen through the service's own
+`omarchy-shell notifications dismiss`. In practice the toast is gone within a
+few tens of milliseconds, but it can show for a frame. Things worth knowing:
+
+- Omarchy makes no sound for notifications, so there is nothing to silence on
+  this side. A bridge set up to play its own sound keeps playing it; turn that
+  off in the bridge.
+- Closing the toast does not dismiss anything on the phone: KDE Connect only
+  does that when asked through its own D-Bus method, and GSConnect and Valent
+  are never told.
+- The toast is found by its title. A desktop toast on screen at the same
+  moment whose title contains the phone one's would be closed with it; it is
+  still in the archive.
+- While Do Not Disturb is on nothing reaches the screen anyway, so the mute
+  does nothing then.
+- To stop phone notifications reaching the desktop at all, turn notification
+  sync off in the bridge instead; then they are not kept here either.
+
+Recognising the bridges needs nothing but the name on each notification and,
+to offer the switch before the first one, the list of names already owned on
+your session bus. No device, account or address is read, and nothing leaves the
+machine. The setting is remembered in
+`~/.local/state/omarchy-notification-center/phone.json`.
+
+Bind it to a key the way you would Do Not Disturb:
+
+```bash
+omarchy-shell jankeesvw.notification-center.phone toggle   # or: set on|off, state
+```
 
 ## Where things are kept
 
@@ -110,8 +156,8 @@ omarchy-shell jankeesvw.notification-center toggle
 
 ## Tests
 
-The Slack matching has unit tests. Run them from the plugin directory with
-`node --test`.
+The Slack matching and the phone detection have unit tests. Run them from the
+plugin directory with `node --test`.
 
 ## Licence
 

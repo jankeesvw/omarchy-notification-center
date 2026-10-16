@@ -9,6 +9,7 @@ import qs.Ui
 import "components"
 import "Store.js" as Store
 import "lib/SlackLink.js" as SlackLink
+import "lib/PhoneMute.js" as PhoneMute
 
 // A notification center for Omarchy: everything you were sent, still there
 // when you go back for it.
@@ -53,6 +54,7 @@ Panel {
   readonly property string clickAction: setting("clickAction", "Auto")
   readonly property bool showBody: setting("showBody", true)
   readonly property bool showPreview: setting("showPreview", true)
+  readonly property string phoneApps: setting("phoneApps", PhoneMute.DEFAULT_APPS)
 
   // ------------------------------------------------------------- the service
   //
@@ -79,6 +81,15 @@ Panel {
 
   function toggleDnd() {
     if (notificationService) notificationService.setDoNotDisturb(!notificationService.doNotDisturb)
+  }
+
+  // Phone notifications on their own, beside Do Not Disturb rather than part
+  // of it. The archive service owns the state, so every bar agrees on it.
+  readonly property bool phoneMuted: store ? store.phoneMuted === true : false
+  readonly property bool phoneAvailable: store ? store.phoneAvailable === true : false
+
+  function togglePhone() {
+    if (store && typeof store.setPhoneMuted === "function") store.setPhoneMuted(!store.phoneMuted)
   }
 
   // ------------------------------------------------------------- the store
@@ -109,12 +120,14 @@ Panel {
     store.keepDays = keepDays
     store.maxItems = maxItems
     store.showPreview = showPreview
+    store.phoneApps = phoneApps
   }
 
   onBarChanged: bindStore()
   onKeepDaysChanged: pushSettings()
   onMaxItemsChanged: pushSettings()
   onShowPreviewChanged: pushSettings()
+  onPhoneAppsChanged: pushSettings()
 
   Timer {
     interval: 200
@@ -353,9 +366,10 @@ Panel {
     tooltipText: {
       if (root.dnd) return root.unread > 0
         ? "Silenced · " + root.unread + " new" : "Notifications silenced"
-      if (root.unread === 1) return "1 new notification"
-      if (root.unread > 1) return root.unread + " new notifications"
-      return "Notifications"
+      var phone = root.phoneMuted ? " \u00b7 phone muted" : ""
+      if (root.unread === 1) return "1 new notification" + phone
+      if (root.unread > 1) return root.unread + " new notifications" + phone
+      return "Notifications" + phone
     }
 
     onPressed: function(b) {
@@ -475,6 +489,9 @@ Panel {
         // started filtering on any keypress would be a panel that swallows
         // whatever you were typing in the window underneath.
         if (text === "/") root.startSearch()
+        // The phone switch is a small target in a corner, so it gets a key
+        // as well. Lower-case only, so a shifted key does nothing surprising.
+        else if (text === "p" && root.phoneAvailable) root.togglePhone()
       }
 
       Column {
@@ -522,6 +539,23 @@ Panel {
               fontFamily: root.fontFamily
               visible: root.entries.length > 0
               onClicked: root.searching ? root.endSearch() : root.startSearch()
+            }
+
+            // Beside the bell and drawn the same way: the glyph struck
+            // through and in the accent while muted. U+F011C (cellphone) and
+            // U+F0950 (cellphone-off), as surrogate pairs like the bell. Only
+            // there on a machine that has a phone bridge, and always there
+            // while muted so the way back never disappears.
+            PanelActionButton {
+              anchors.verticalCenter: parent.verticalCenter
+              visible: root.phoneAvailable
+              iconText: root.phoneMuted ? "\uDB82\uDD50" : "\uDB80\uDD1C"
+              tooltipText: root.phoneMuted
+                ? "Allow phone notifications  ( p )"
+                : "Mute phone notifications  ( p )"
+              foreground: root.phoneMuted ? Commons.Color.accent : root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.togglePhone()
             }
 
             PanelActionButton {

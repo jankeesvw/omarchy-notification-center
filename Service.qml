@@ -4,6 +4,7 @@ import Quickshell.Io
 import "components/WebApps.js" as WebApps
 
 import "Store.js" as Store
+import "lib/PhoneMute.js" as PhoneMute
 
 // The archive, mounted once for the shell.
 //
@@ -28,6 +29,8 @@ Item {
   property int maxItems: 1000
   property bool showPreview: true
   property int pageSize: 500
+
+  property string phoneApps: PhoneMute.DEFAULT_APPS
 
   property var entries: []
   property double lastSeen: 0
@@ -61,6 +64,74 @@ Item {
       } catch (e) {
       }
     }
+  }
+
+  // ------------------------------------------------------- phone mute
+  //
+  // Notifications mirrored from a phone, muted on their own, with Do Not
+  // Disturb left as it is. The notification service gives a plugin no say over
+  // which toasts it shows, so this works after the fact: the archive below
+  // sees every toast the moment the service writes it to disk, and a phone one
+  // is taken straight back off the screen over the service's own IPC. It is
+  // archived first, so a muted notification is still in the panel. Closing a
+  // toast does not reach the phone: KDE Connect only dismisses on the phone
+  // when asked through its own D-Bus method, and GSConnect and Valent send
+  // through GNotification, which never tells an app its notification closed.
+  property bool phoneMuted: false
+  property bool phoneBridgeOnBus: false
+  readonly property var phoneAppList: PhoneMute.parseApps(root.phoneApps)
+  readonly property bool phoneBridgeSeen: PhoneMute.anyPhone(root.entries, root.phoneAppList)
+  // Kept showing while muted, whatever else is true, or there would be no
+  // way back from it.
+  readonly property bool phoneAvailable: phoneMuted || phoneBridgeOnBus || phoneBridgeSeen
+
+  // The IPC route to the notification service, a property so a test harness
+  // can point it at something that is not the running shell.
+  property var notificationsIpc: ["omarchy-shell", "notifications"]
+
+  readonly property string phoneStatePath:
+    (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
+    + "/omarchy-notification-center/phone.json"
+
+  function setPhoneMuted(value) {
+    root.phoneMuted = !!value
+    phoneState.setText(PhoneMute.serializeState(root.phoneMuted))
+  }
+
+  function silencePhoneToast(entry) {
+    if (!PhoneMute.shouldSilence(entry, root.phoneMuted, dndBridge.doNotDisturb,
+                                 root.phoneAppList, Date.now()))
+      return false
+    Quickshell.execDetached(root.notificationsIpc.concat(["dismiss", String(entry.summary)]))
+    return true
+  }
+
+  FileView {
+    id: phoneState
+    path: root.phoneStatePath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.phoneMuted = PhoneMute.parseState(text()).muted
+  }
+
+  // Only the bridges' own well-known names, from the list of names already
+  // owned on the bus; nothing is asked of the bridge itself.
+  Process {
+    id: busProc
+    command: ["busctl", "--user", "list", "--acquired", "--no-legend", "--no-pager"]
+    stdout: StdioCollector {
+      onStreamFinished: root.phoneBridgeOnBus = PhoneMute.busHasBridge(text)
+    }
+  }
+
+  Timer {
+    interval: 300000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: if (!busProc.running) busProc.running = true
   }
 
   readonly property int unread: {
@@ -150,6 +221,7 @@ Item {
     if (next.length > pageSize) next = next.slice(0, pageSize)
     entries = next
     entryAdded(entry)
+    silencePhoneToast(entry)
   }
 
   Process {
@@ -248,8 +320,30 @@ Item {
         watching: watchProc.running,
         loaded: root.loaded,
         lastSeen: root.lastSeen,
-        dnd: dndBridge.doNotDisturb
+        dnd: dndBridge.doNotDisturb,
+        phoneMuted: root.phoneMuted,
+        phoneAvailable: root.phoneAvailable
       })
+    }
+  }
+
+  // For a key binding, the way `notifications toggleDnd` is for the bell.
+  IpcHandler {
+    target: "jankeesvw.notification-center.phone"
+
+    function state(): string {
+      return root.phoneMuted ? "muted" : "unmuted"
+    }
+
+    function toggle(): string {
+      root.setPhoneMuted(!root.phoneMuted)
+      return state()
+    }
+
+    function set(value: string): string {
+      var v = String(value || "").toLowerCase()
+      root.setPhoneMuted(v === "on" || v === "true" || v === "1" || v === "yes" || v === "muted")
+      return state()
     }
   }
 
