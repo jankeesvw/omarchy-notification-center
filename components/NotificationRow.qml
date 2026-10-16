@@ -36,6 +36,7 @@ Item {
   property int urgency: 1
   property bool showBody: true
   property bool showPreview: true
+  property bool useSystemCornerRadius: false
   property bool unread: false
 
   property color foreground: Commons.Color.foreground
@@ -119,7 +120,7 @@ Item {
     // whatever contrasts with the panel it is on.
     color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
                    root.hovered ? 0.11 : 0.06)
-    radius: Style.space(12)
+    radius: useSystemCornerRadius ? Style.cornerRadius : Style.space(12)
 
     Behavior on color { ColorAnimation { duration: 90 } }
 
@@ -162,7 +163,7 @@ Item {
 
       Rectangle {
         anchors.fill: parent
-        radius: Style.space(9)
+        radius: useSystemCornerRadius ? Math.max(2, Style.cornerRadius / 2) : Style.space(9)
         visible: !root.hasIcon
         color: root.foreground
         opacity: 0.12
@@ -371,7 +372,7 @@ Item {
         Rectangle {
           id: previewMask
           anchors.fill: previewImage
-          radius: Style.space(8)
+          radius: useSystemCornerRadius ? Math.max(2, Style.cornerRadius / 2) : Style.space(8)
           color: "black"
           visible: false
           layer.enabled: true
