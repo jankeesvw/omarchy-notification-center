@@ -483,12 +483,19 @@ remove_key() {
   rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
 }
 
+remove_keys() {
+  local key
+  for key in "$@"; do remove_key "$key"; done
+}
+
+# One key or several, under one lock: a group cleared from the panel arrives
+# as every key in it, and a lock and a process per key is a group that takes
+# seconds to go away.
 cmd_remove() {
   ensure_store
-  local key=$1
-  [[ -n $key ]] || die "remove needs a key"
-  with_lock remove_key "$key"
-  printf '{"ok":true,"removed":%s}\n' "$(printf '%s' "$key" | jq -Rs .)"
+  [[ $# -gt 0 && -n $1 ]] || die "remove needs a key"
+  with_lock remove_keys "$@"
+  printf '{"ok":true,"removed":%s}\n' "$(printf '%s\n' "$@" | jq -Rnc '[inputs]')"
 }
 
 # Clear is a line drawn under what you have seen, not a shredder. It used to
@@ -671,7 +678,7 @@ case ${1:-} in
   sync)   shift; quiet=1; cmd_sync; printf '{"ok":true,"synced":true}\n' ;;
   watch)  shift; cmd_watch ;;
   list)   shift; cmd_list "${1:-200}" ;;
-  remove) shift; cmd_remove "${1:-}" ;;
+  remove) shift; cmd_remove "$@" ;;
   clear)  shift; cmd_clear ;;
   seen)   shift; cmd_seen "$@" ;;
   unread) shift; cmd_unread ;;
@@ -688,7 +695,7 @@ notification-center: the store behind the Omarchy notification center
   watch              follow the notification service and archive what it receives
   sync               catch up on anything not archived yet
   list [LIMIT]       the archive as JSON, newest first (default 200)
-  remove KEY         drop one notification
+  remove KEY...      drop one notification, or several
   clear              drop all of them
   seen [MS]          read or set when the center was last opened
   unread             how many arrived since then

@@ -47,7 +47,15 @@ icon and all, and keeps it for 30 days.
   Right-clicking the bell in the bar does it without opening anything.
 - **The magnifier**, or `/`, searches everything kept. Escape leaves the
   search, Escape again closes the panel.
-- **No grouping**, on purpose. Ten identical messages are ten cards, not one card with a ×10 on it. A stack hides when each one arrived, and the newest one on top hides whether an older one was urgent. If an app sends the same thing ten times, that is worth seeing as it is.
+- **Grouping**, off by default. The layers button in the header turns it on
+  and off, and *Group notifications* sets where it starts. On, everything
+  that belongs together becomes one stacked card, `Mail · 9`, filed under the
+  day of its newest. A click opens it in place; *Show less* folds it back, and
+  the × on the stack or the group header dismisses the whole group. Which group a
+  notification is in comes from *Group rules*, `Name=regex` separated by
+  semicolons and matched against the app, its icon and the title (never the
+  body); anything no rule claims is grouped by app, or by its title when the
+  app is nameless (`notify-send`, `omarchy-action`).
 
 ## Settings
 
@@ -59,6 +67,8 @@ icon and all, and keeps it for 30 days.
 | Clicking a notification | Auto | Opens the picture or the Slack conversation, or focuses the app. Or neither. |
 | Show the message text | on | Off leaves the sender and subject only. |
 | Show pictures | on | Off stops keeping copies as well. |
+| Group notifications | off | Where grouping starts; the layers button in the header switches it from there. |
+| Group rules | Mail, VPN, Network, Screenshots, Crashes, Reminders | `Name=regex; Name=regex`, case-insensitive, first match wins. |
 | Panel width | 420 | In the shell's spacing units. |
 | List height | 0 | 0 runs the list to the bottom of the screen. |
 
@@ -89,7 +99,7 @@ than the panel loads:
 
 ```
 list [LIMIT]       the archive as JSON, newest first
-remove KEY         drop one, or clear for all of them
+remove KEY...      drop one or several, or clear for all of them
 seed [N]           fill it with test traffic
 backfill           give older entries the picture their action points at
 ```

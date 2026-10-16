@@ -63,6 +63,31 @@ Item {
     }
   }
 
+  // The grouping switch in the panel header. Kept here rather than on the
+  // widget so every screen's bell agrees, and in a file of its own because a
+  // widget cannot write its settings back to shell.json. Empty until the
+  // switch is first pressed, which leaves the setting in charge.
+  property string groupingChoice: ""
+
+  FileView {
+    id: groupingFile
+    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state")
+      + "/omarchy-notification-center/grouping"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var value = text().trim()
+      root.groupingChoice = value === "on" || value === "off" ? value : ""
+    }
+    onLoadFailed: root.groupingChoice = ""
+  }
+
+  function setGrouping(on) {
+    groupingChoice = on ? "on" : "off"
+    groupingFile.setText(groupingChoice + "\n")
+  }
+
   readonly property int unread: {
     var count = 0
     for (var i = 0; i < entries.length; i++) {
@@ -122,6 +147,20 @@ Item {
     entries = next
     entriesReset()
     Quickshell.execDetached(root.storeCommand(["remove", String(key)]))
+  }
+
+  // A whole group at once: one pass over the list and one store process, not
+  // one of each per notification in it.
+  function removeMany(keys) {
+    if (!keys || keys.length === 0) return
+    var gone = {}
+    for (var k = 0; k < keys.length; k++) gone[String(keys[k])] = true
+    var next = []
+    for (var i = 0; i < entries.length; i++)
+      if (!gone[entries[i].key]) next.push(entries[i])
+    entries = next
+    entriesReset()
+    Quickshell.execDetached(root.storeCommand(["remove"].concat(keys.map(String))))
   }
 
   // Detached, like remove and seed above it: a clear that arrives while the

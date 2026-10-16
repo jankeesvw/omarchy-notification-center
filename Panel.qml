@@ -53,6 +53,16 @@ Panel {
   readonly property string clickAction: setting("clickAction", "Auto")
   readonly property bool showBody: setting("showBody", true)
   readonly property bool showPreview: setting("showPreview", true)
+  readonly property bool groupingDefault: setting("groupNotifications", false)
+  // The header switch wins once it has been pressed; until then the setting
+  // decides.
+  readonly property bool grouping: store && store.groupingChoice !== ""
+    ? store.groupingChoice === "on" : groupingDefault
+  readonly property string groupRules: setting("groupRules", defaultGroupRules)
+
+  readonly property string defaultGroupRules:
+    "Mail=thunderbird|mail; VPN=vpn; Network=internet|router|local network; "
+    + "Screenshots=screenshot; Crashes=process crashed; Reminders=reminder"
 
   // ------------------------------------------------------------- the service
   //
@@ -180,6 +190,11 @@ Panel {
     if (!entry || !entry.key) return
     if (root.opened && store) store.markSeen()
     if (!matches(entry)) return
+    // A new one can move a whole group to the top, which is not an insert.
+    if (grouping) {
+      rebuild()
+      return
+    }
     rows.insert(0, rowFor(entry))
     if (root.opened && list.atYBeginning) Qt.callLater(function() {
       if (root.opened) list.positionViewAtBeginning()
@@ -198,8 +213,17 @@ Panel {
         || String(entry.body || "").toLowerCase().indexOf(needle) >= 0
   }
 
-  function rowFor(entry) {
+  // kind is "entry" for one notification, "group" for a collapsed group drawn
+  // as its newest member, and "header" for the line above an open group. day
+  // is the section the row is filed under, which for a group is the day of its
+  // newest member; ownDay is the day the notification itself arrived.
+  function rowFor(entry, kind, group, count, day) {
+    var ownDay = dayOf(Number(entry.timestamp || 0))
     return {
+      kind: kind || "entry",
+      group: String(group || ""),
+      count: Number(count || 1),
+      ownDay: ownDay,
       key: String(entry.key || ""),
       app: String(entry.app || ""),
       appIcon: String(entry.appIcon || ""),
@@ -211,18 +235,126 @@ Panel {
       glyph: String(entry.glyph || ""),
       urgency: Number(entry.urgency || 0),
       timestamp: Number(entry.timestamp || 0),
-      day: dayOf(Number(entry.timestamp || 0)),
+      day: day || ownDay,
       time: Qt.formatDateTime(new Date(Number(entry.timestamp || 0)), "HH:mm")
     }
   }
 
   function rebuild() {
     rows.clear()
-    for (var i = 0; i < entries.length; i++)
-      if (matches(entries[i])) rows.append(rowFor(entries[i]))
+    if (!grouping) {
+      for (var i = 0; i < entries.length; i++)
+        if (matches(entries[i])) rows.append(rowFor(entries[i]))
+      return
+    }
+    var groups = collectGroups()
+    for (var g = 0; g < groups.length; g++) {
+      var items = groups[g].items
+      var name = groups[g].name
+      var day = dayOf(Number(items[0].timestamp || 0))
+      if (items.length === 1) {
+        rows.append(rowFor(items[0], "entry", name, 1, day))
+      } else if (expanded[name]) {
+        rows.append(rowFor(items[0], "header", name, items.length, day))
+        for (var j = 0; j < items.length; j++)
+          rows.append(rowFor(items[j], "entry", name, 1, day))
+      } else {
+        rows.append(rowFor(items[0], "group", name, items.length, day))
+      }
+    }
   }
 
   onFilterChanged: rebuild()
+  onGroupingChanged: rebuild()
+  onGroupRulesChanged: rebuild()
+
+  // ------------------------------------------------------------- grouping
+  //
+  // Off by default. When on, everything that belongs together is one stacked
+  // card under the day of its newest member, and a click opens it in place.
+  // Which group a notification is in comes from the rules first, "Name=regex"
+  // separated by semicolons and matched against the app, its icon and the
+  // summary, never the body: a mail about a VPN invoice is still mail. What no
+  // rule claims is grouped by app, and a notification with no app worth the
+  // name (notify-send, omarchy's own helpers) by its summary, so ten "Download
+  // complete" are one group and not lumped in with the battery warnings.
+
+  property var expanded: ({})
+
+  readonly property var rules: {
+    var out = []
+    var parts = String(groupRules || "").split(/[;\n]/)
+    for (var i = 0; i < parts.length; i++) {
+      var at = parts[i].indexOf("=")
+      if (at <= 0) continue
+      var name = parts[i].slice(0, at).trim()
+      var pattern = parts[i].slice(at + 1).trim()
+      if (name === "" || pattern === "") continue
+      try {
+        out.push({ name: name, re: new RegExp(pattern, "i") })
+      } catch (e) {
+      }
+    }
+    return out
+  }
+
+  function groupOf(entry) {
+    var app = String(entry.app || "")
+    var haystack = app + "\n" + String(entry.appIcon || "") + "\n" + String(entry.summary || "")
+    for (var i = 0; i < rules.length; i++)
+      if (rules[i].re.test(haystack)) return rules[i].name
+    if (app !== "" && !/^(omarchy-action|notify-send)$/i.test(app)) return app
+    var summary = String(entry.summary || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    return summary !== "" ? summary : (app !== "" ? app : "Other")
+  }
+
+  // Groups in the order of their newest member, which is the order the
+  // entries are already in.
+  function collectGroups() {
+    var groups = []
+    var byName = {}
+    for (var i = 0; i < entries.length; i++) {
+      if (!matches(entries[i])) continue
+      var name = groupOf(entries[i])
+      if (!byName[name]) {
+        byName[name] = { name: name, items: [] }
+        groups.push(byName[name])
+      }
+      byName[name].items.push(entries[i])
+    }
+    return groups
+  }
+
+  function toggleGrouping() {
+    if (!store || typeof store.setGrouping !== "function") return
+    store.setGrouping(!grouping)
+  }
+
+  function toggleGroup(name) {
+    var next = {}
+    for (var k in expanded) next[k] = expanded[k]
+    if (next[name]) delete next[name]
+    else next[name] = true
+    expanded = next
+    // Rebuilding the model throws the view back to the top, which is the
+    // last place you want to be after opening a group halfway down.
+    var y = list.contentY
+    rebuild()
+    Qt.callLater(function() {
+      list.contentY = Math.max(0, Math.min(y, list.contentHeight - list.height))
+    })
+  }
+
+  // Everything in the group that is showing, so clearing a group while a
+  // search is open clears what the search found and not the rest of it.
+  function removeGroup(name) {
+    var keys = []
+    for (var i = 0; i < entries.length; i++)
+      if (matches(entries[i]) && groupOf(entries[i]) === name) keys.push(String(entries[i].key))
+    if (keys.length === 0 || !store) return
+    if (typeof store.removeMany === "function") store.removeMany(keys)
+    else for (var j = 0; j < keys.length; j++) store.remove(keys[j])
+  }
 
   // The heading a notification is filed under. Days rather than hours, because
   // what you remember about a notification you are hunting for is which day it
@@ -312,6 +444,10 @@ Panel {
       searching = false
       filter = ""
       search.text = ""
+      if (Object.keys(expanded).length > 0) {
+        expanded = ({})
+        rebuild()
+      }
       return
     }
     now = Date.now()
@@ -509,6 +645,19 @@ Panel {
             // panel can be opened from a key binding while you are typing
             // somewhere else, which is exactly how it ends up eating a
             // sentence out of the window underneath.
+            // Grouping on and off without a trip to the settings, since
+            // whether a stack helps depends on what the day has been like.
+            PanelActionButton {
+              anchors.verticalCenter: parent.verticalCenter
+              // U+F0328, nf-md-layers.
+              iconText: "\uDB80\uDF28"
+              tooltipText: root.grouping ? "Show every notification on its own" : "Group notifications"
+              foreground: root.grouping ? Commons.Color.accent : root.foreground
+              fontFamily: root.fontFamily
+              visible: root.entries.length > 0
+              onClicked: root.toggleGrouping()
+            }
+
             PanelActionButton {
               // Anchored rather than left to the Row, which stacks its
               // children from the top: an icon button and a text button are
@@ -621,29 +770,97 @@ Panel {
             }
           }
 
-          delegate: NotificationRow {
-            id: row
+          delegate: Item {
+            id: cell
             required property var model
 
-            width: list.width - list.lane
-            app: model.app
-            appIcon: model.appIcon
-            summary: model.summary
-            body: model.body
-            image: model.image
-            preview: model.preview
-            glyph: model.glyph
-            timestamp: model.timestamp
-            now: root.now
-            urgency: model.urgency
-            unread: model.timestamp > root.readMark
-            showBody: root.showBody
-            showPreview: root.showPreview
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+            readonly property bool isHeader: model.kind === "header"
+            readonly property bool isGroup: model.kind === "group"
 
-            onClicked: root.activate(row.model)
-            onRemoveRequested: root.remove(row.model.key)
+            width: list.width - list.lane
+            height: isHeader ? groupHeader.height : row.implicitHeight
+
+            // The line above an open group: its name, and the two things you
+            // do to a group as a whole.
+            Item {
+              id: groupHeader
+              visible: cell.isHeader
+              width: parent.width
+              height: visible ? Math.max(groupTitle.implicitHeight, groupActions.height) : 0
+
+              Text {
+                textFormat: Text.PlainText
+                id: groupTitle
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(2)
+                anchors.right: groupActions.left
+                anchors.rightMargin: Style.space(6)
+                anchors.verticalCenter: parent.verticalCenter
+                text: cell.model.group + "  \u00b7  " + cell.model.count
+                elide: Text.ElideRight
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                color: root.foreground
+                opacity: 0.7
+              }
+
+              Row {
+                id: groupActions
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Show less"
+                  tooltipText: "Fold this group back into one card"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.toggleGroup(cell.model.group)
+                }
+
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "\u00d7"
+                  tooltipText: "Dismiss every notification in this group"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.removeGroup(cell.model.group)
+                }
+              }
+            }
+
+            NotificationRow {
+              id: row
+              visible: !cell.isHeader
+              width: parent.width
+              app: cell.model.app
+              appIcon: cell.model.appIcon
+              summary: cell.model.summary
+              body: cell.model.body
+              image: cell.model.image
+              preview: cell.model.preview
+              glyph: cell.model.glyph
+              timestamp: cell.model.timestamp
+              now: root.now
+              urgency: cell.model.urgency
+              unread: cell.model.timestamp > root.readMark
+              showBody: root.showBody
+              showPreview: root.showPreview
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              stackCount: cell.isGroup ? cell.model.count : 1
+              groupName: cell.isGroup ? cell.model.group : ""
+              dayPrefix: cell.model.ownDay !== cell.model.day ? cell.model.ownDay : ""
+
+              // A collapsed group opens on a click, and its × takes the whole
+              // group with it: the card stands for all of them.
+              onClicked: cell.isGroup ? root.toggleGroup(cell.model.group) : root.activate(cell.model)
+              onRemoveRequested: cell.isGroup ? root.removeGroup(cell.model.group) : root.remove(cell.model.key)
+            }
           }
         }
 
