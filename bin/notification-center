@@ -463,11 +463,17 @@ cmd_list() {
   # filtered rather than deleted, so the cut has to happen before the limit:
   # take the newest N of what is still showing, not what is left of the newest
   # N after the cleared ones are dropped out of it.
-  tac "$archive" 2>/dev/null \
+  #
+  # Captured rather than printed straight through: when `head` stops reading
+  # early, pipefail fails the pipeline after jq has already printed the array,
+  # and falling back to `[]` then would print a second one after it.
+  local out
+  out=$(tac "$archive" 2>/dev/null \
     | jq -Rc --argjson cleared "$cleared_at" \
         'fromjson? // empty | select((.timestamp // 0) > $cleared)' 2>/dev/null \
     | head -n "$limit" \
-    | jq -s '.' 2>/dev/null || printf '[]\n'
+    | jq -s '.' 2>/dev/null)
+  printf '%s\n' "${out:-[]}"
 }
 
 remove_key() {
