@@ -2,11 +2,11 @@
 #
 # The store behind the notification center.
 #
-# Omarchy's notification service already writes every notification to disk: one
-# JSON file per popup under ~/.local/state/omarchy/notifications/, moved into
-# history/ when it leaves the screen. That directory is not a history you can
-# read back, though. It keeps ten files and deletes the eleventh, and the icon
-# it points at is deleted along with it.
+# Omarchy's notification service already writes every notification to disk:
+# JSON arrays in live.json and history.json on current releases, or one file
+# per popup moved into history/ on older releases. That is not a history you can
+# read back indefinitely, though. The service keeps a bounded recent history;
+# older releases keep only ten files and delete their icons along with them.
 #
 # So this copies each file out of there the moment it appears, into an archive
 # that is kept for as long as you asked for, with its icon copied beside it so
@@ -222,7 +222,42 @@ link_source() {
   printf '%s' "$action" | grep -oiE "https?://[^[:space:][:cntrl:]\"'<>]+" | head -n 1
 }
 
-# Take one of the service's JSON files into the archive, and print the entry
+# Read the current service's aggregate files as individual notifications. Their
+# stable keys are unrelated to the file name, and ts is in seconds rather than
+# the milliseconds used by the archive. Keep the legacy reader below as well.
+ingest_collection() {
+  local file=$1 announce_existing=${2:-0} tmp row key
+  [[ -s $file ]] || return 0
+  # The daemon bounds each collection to 100 rows. Refuse oversized input and
+  # invalid keys before using one as an archive/image identity.
+  (( $(stat -c%s -- "$file" 2>/dev/null || echo 0) <= 4194304 )) || return 0
+  tmp=$(mktemp "$store/.entry.XXXXXX") || return 0
+  while IFS= read -r row; do
+    key=$(jq -r '.key' <<< "$row")
+    printf '%s\n' "$row" > "$tmp"
+    ingest_entry "$tmp" "$announce_existing" "$key"
+  done < <(jq -c '
+    if type == "array" then
+      [.[:100][] | select(type == "object")
+       | select((.key | type) == "string")
+       | select(.key | test("^[A-Za-z0-9_-]{1,120}$"))
+       | select((.ts | type) == "number") | select(.ts > 0)
+       | .timestamp = (.ts * 1000 | floor)]
+      | sort_by(.timestamp) | .[]
+    else empty end
+  ' "$file" 2>/dev/null)
+  rm -f -- "$tmp"
+}
+
+ingest_file() {
+  case ${1##*/} in
+    live.json|history.json) ingest_collection "$@" ;;
+    quiet.json) return 0 ;;
+    *) ingest_entry "$@" ;;
+  esac
+}
+
+# Take one notification into the archive, and print the entry
 # that was added.
 #
 # The second argument is what makes two screens work. The bar runs once per
@@ -234,10 +269,10 @@ link_source() {
 # the entry whether it wrote it or found it, and the panels drop the duplicate
 # by key. The catch-up sync passes 0 instead, or starting the shell would
 # replay the whole archive at both of them.
-ingest_file() {
+ingest_entry() {
   local file=$1 announce_existing=${2:-0}
   local key entry app_icon image_src exec_src icon_copy image_copy file_src link_src preview_copy
-  key=$(basename -- "$file"); key=${key%.json}
+  key=${3:-$(basename -- "$file" .json)}
   [[ -n $key ]] || return 0
   if is_dismissed "$key"; then
     return 0
@@ -250,7 +285,7 @@ ingest_file() {
 
   # A file caught mid-write parses as nothing; it will be caught again on the
   # move into history, or by the next sync.
-  jq -e . "$file" >/dev/null 2>&1 || return 0
+  jq -e 'type == "object"' "$file" >/dev/null 2>&1 || return 0
 
   if [[ -s $cleared_at_file ]]; then
     local cleared_at file_stamp
@@ -365,8 +400,11 @@ prune() {
   # line, which meant everything after it was missing from `kept` and was then
   # written back over the archive as the new truth. Everything below the bad
   # byte, gone.
-  if ! kept=$(jq -Rc --argjson cutoff "$cutoff" \
-      'fromjson? // empty | select(.timestamp >= $cutoff)' "$archive" 2>/dev/null); then
+  # A long-lived popup can be older than the closed rows imported before it.
+  # Retain by arrival time rather than the order snapshots were ingested.
+  if ! kept=$(jq -Rsc --argjson cutoff "$cutoff" \
+      'split("\n") | map(fromjson? // empty | select(.timestamp >= $cutoff))
+       | sort_by(.timestamp) | .[]' "$archive" 2>/dev/null); then
     return 0
   fi
   kept=$(printf '%s\n' "$kept" | tail -n "$max_items")
@@ -443,10 +481,6 @@ disarm_archive() {
 cmd_watch() {
   ensure_store
   mkdir -p "$src_dir" "$src_history"
-  # Catch up first: the shell has been down, or this is the first run, and
-  # whatever arrived in the meantime is still lying in those directories.
-  cmd_sync
-
   command -v inotifywait >/dev/null 2>&1 || die "inotifywait is not installed"
   # util-linux, and it is already here on anything running systemd, but say so
   # rather than watch fail on a missing word later.
@@ -472,6 +506,10 @@ cmd_watch() {
   # for and aim a kill at whatever later inherited the number.
   exec 3< <(setpriv --pdeathsig TERM inotifywait -m -q -e close_write \
     -e moved_to --format '%w%f' "$src_dir" "$src_history" 2>/dev/null)
+
+  # Start watching before catch-up, so notifications arriving during an import
+  # queue on the pipe instead of falling into a gap before the watch starts.
+  cmd_sync
 
   while IFS= read -r file <&3; do
     [[ $file == *.json ]] || continue
@@ -514,7 +552,11 @@ remove_key() {
   # Both directories, not only history: a notification dismissed while its
   # toast is still on screen is sitting in the popup directory, and leaving it
   # there means the move into history archives it again a moment later.
-  rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
+  # A source key must never turn a remove into deletion of an aggregate file.
+  case $key in
+    live|history|quiet) ;;
+    *) rm -f -- "$src_history/$key.json" "$src_dir/$key.json" ;;
+  esac
 }
 
 cmd_remove() {
