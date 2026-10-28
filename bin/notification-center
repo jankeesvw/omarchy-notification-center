@@ -2,16 +2,14 @@
 #
 # The store behind the notification center.
 #
-# Omarchy's notification service already writes every notification to disk: one
-# JSON file per popup under ~/.local/state/omarchy/notifications/, moved into
-# history/ when it leaves the screen. That directory is not a history you can
-# read back, though. It keeps ten files and deletes the eleventh, and the icon
-# it points at is deleted along with it.
+# Omarchy's notification service writes closed notifications to history.json
+# on newer builds, keeping a day and at most 100 rows. Older builds write one
+# JSON file per popup and move it into history/, keeping only ten files.
 #
-# So this copies each file out of there the moment it appears, into an archive
-# that is kept for as long as you asked for, with its icon copied beside it so
-# the entry still has a face in a month. Nothing here writes to the service's
-# own directories: it only reads them and gets out of the way.
+# This copies notifications into a longer-lived archive, with their icons
+# beside them so an entry still has a face in a month. Aggregate history is
+# read on every rewrite and never changed here; live.json and quiet.json belong
+# to the service and are left alone.
 #
 # Every subcommand prints JSON, one object or one array, including failures, so
 # nothing that goes wrong reaches the panel as a parse error.
@@ -25,13 +23,15 @@ umask 077
 
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}
 
-# Where the notification service puts what it received. Live popups sit in the
-# first, everything that left the screen in the second.
+# The service keeps history.json, live.json and quiet.json in src_dir on newer
+# builds. Only history.json is ingested. Older builds keep popups there and
+# move them into history/ when they close.
 # Overridable so the whole thing can be pointed at a scratch directory and
 # driven by hand, which is the only way to exercise the watcher without waiting
 # for real notifications to arrive.
 src_dir=${NC_SRC_DIR:-$state_home/omarchy/notifications}
 src_history=${NC_SRC_HISTORY:-$src_dir/history}
+history_json="$src_dir/history.json"
 
 # Ours.
 store=${NC_STORE:-$state_home/omarchy-notification-center}
@@ -88,7 +88,7 @@ now_ms() { printf '%s' "$(($(date +%s%N) / 1000000))"; }
 is_dismissed() {
   local key=$1
   [[ -n $key ]] || return 1
-  if [[ -s $dismissed_file ]] && grep -qxF "$key" "$dismissed_file" 2>/dev/null; then
+  if [[ -s $dismissed_file ]] && grep -qxF -- "$key" "$dismissed_file" 2>/dev/null; then
     return 0
   fi
   if [[ -s $cleared_at_file ]]; then
@@ -104,12 +104,10 @@ is_dismissed() {
   return 1
 }
 
-# Whether this notification is already in the archive. Keys are the service's
-# own file names ("1787227796695-32"): a millisecond stamp and the notification
-# id, which is unique per notification and stable across the move from the
-# popup directory into history. That is what makes catching the same file twice
-# harmless, and it has to be, because a popup is caught once while it is on
-# screen and again when it is archived.
+# Keys come from the per-file name ("1787227796695-32") on older builds,
+# or the row's own key in history.json. Both stay stable when read again,
+# making duplicate ingestion harmless. A per-file popup is seen once while
+# on screen and again when it moves into history/.
 have_key() {
   grep -qF "\"key\":\"$1\"" "$archive" 2>/dev/null
 }
@@ -222,23 +220,34 @@ link_source() {
   printf '%s' "$action" | grep -oiE "https?://[^[:space:][:cntrl:]\"'<>]+" | head -n 1
 }
 
-# Take one of the service's JSON files into the archive, and print the entry
-# that was added.
-#
-# The second argument is what makes two screens work. The bar runs once per
-# monitor and each copy has its own watcher, so both see the same notification
-# and both try to archive it; one takes the lock first and the other finds the
-# key already there. If that second one stayed silent, the panel on its screen
-# would never hear about the notification at all, and would sit there missing
-# it until something else made it re-read the archive. So a live watcher prints
-# the entry whether it wrote it or found it, and the panels drop the duplicate
-# by key. The catch-up sync passes 0 instead, or starting the shell would
-# replay the whole archive at both of them.
+is_service_file() {
+  case $1 in
+    history.json|live.json|quiet.json) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Take one per-notification file into the archive. Aggregate files belong to
+# the service and must never be mistaken for notifications.
 ingest_file() {
-  local file=$1 announce_existing=${2:-0}
-  local key entry app_icon image_src exec_src icon_copy image_copy file_src link_src preview_copy
-  key=$(basename -- "$file"); key=${key%.json}
-  [[ -n $key ]] || return 0
+  local file=$1 key json
+  key=$(basename -- "$file")
+  is_service_file "$key" && return 0
+  key=${key%.json}
+  [[ -n $key && -s $file ]] || return 0
+  # A partial write will be caught again on the move or the next sync.
+  json=$(jq -ce . "$file" 2>/dev/null) || return 0
+  archive_entry "$key" "$json" "${2:-0}"
+}
+
+# Shared field mapping and action sanitization. Per-file watch events pass 1
+# to announce an existing row too, preserving the older notification stream
+# when a popup moves into history/. The service now runs one watcher per shell.
+# Catch-up sync and aggregate history pass 0: replaying existing aggregate rows
+# on every rewrite would reorder the panel.
+archive_entry() {
+  local key=$1 json=$2 announce_existing=${3:-0}
+  local entry app_icon image_src exec_src icon_copy image_copy file_src link_src preview_copy
   if is_dismissed "$key"; then
     return 0
   fi
@@ -246,27 +255,21 @@ ingest_file() {
     (( announce_existing )) && grep -F "\"key\":\"$key\"" "$archive" | head -n 1
     return 0
   fi
-  [[ -s $file ]] || return 0
-
-  # A file caught mid-write parses as nothing; it will be caught again on the
-  # move into history, or by the next sync.
-  jq -e . "$file" >/dev/null 2>&1 || return 0
-
   if [[ -s $cleared_at_file ]]; then
     local cleared_at file_stamp
     cleared_at=$(cat "$cleared_at_file" 2>/dev/null || echo 0)
     if [[ $cleared_at =~ ^[0-9]+$ ]] && (( cleared_at > 0 )); then
-      file_stamp=$(jq -r '(.timestamp // 0) | tonumber?' "$file" 2>/dev/null || echo 0)
+      file_stamp=$(jq -r '(.timestamp // 0) | tonumber?' <<< "$json" 2>/dev/null || echo 0)
       if [[ $file_stamp =~ ^[0-9]+$ ]] && (( file_stamp > 0 && file_stamp <= cleared_at )); then
         return 0
       fi
     fi
   fi
 
-  app_icon=$(jq -r '.appIcon // ""' "$file")
-  image_src=$(jq -r '.image // ""' "$file")
+  app_icon=$(jq -r '.appIcon // ""' <<< "$json")
+  image_src=$(jq -r '.image // ""' <<< "$json")
   # execArgv is what the service writes now; exec is what it wrote before.
-  exec_src=$(jq -r '.execArgv // .exec // ""' "$file")
+  exec_src=$(jq -r '.execArgv // .exec // ""' <<< "$json")
 
   icon_copy=$app_icon
   image_copy=$image_src
@@ -308,20 +311,45 @@ ingest_file() {
      }
      | .timestamp = (if .timestamp > 0 then .timestamp
                      else ((.key | split("-")[0] | tonumber?) // 0) end)' \
-    "$file" 2>/dev/null) || return 0
+    <<< "$json" 2>/dev/null) || return 0
   [[ -n $entry ]] || return 0
 
   printf '%s\n' "$entry" >> "$archive"
   printf '%s\n' "$entry"
 }
 
-# Everything the service is holding, oldest first so the archive stays in the
-# order things happened. Live popups are read before history: a notification
-# that is on screen right now belongs in the center immediately, not when it
-# expires.
+# Aggregate history holds seconds, including fractions; the archive holds integer
+# milliseconds. Read oldest first so the newest rows stay at the archive's tail.
+ingest_history() {
+  [[ -s $history_json ]] || return 0
+  local key json
+  while IFS=$'\t' read -r key json; do
+    [[ -n $key ]] || continue
+    archive_entry "$key" "$json" 0
+  done < <(jq -r '
+    if type == "array" then
+      map(select(type == "object")
+        | select(.key | type == "string")
+        | select(.key | test("^[A-Za-z0-9_-]{1,120}$"))
+        | .timestamp = ((if (.ts | type) == "number" and .ts > 0 then .ts
+                         elif (.closed_ts | type) == "number" and .closed_ts > 0 then .closed_ts
+                         else empty end) * 1000 | floor))
+      | sort_by(.timestamp) | .[]
+      | .key + "\t" + ({app, appIcon, summary, body, glyph, urgency, execArgv, timestamp} | tojson)
+    else empty end
+  ' "$history_json" 2>/dev/null)
+}
+
+# Older builds keep separate files; newer ones rewrite history.json as rows
+# close. Both feed the same archive and keep the service's stable keys.
 sync_all() {
   local file
-  for file in "$src_history"/*.json "$src_dir"/*.json; do
+  for file in "$src_history"/*.json; do
+    [[ -e $file ]] || continue
+    ingest_file "$file"
+  done
+  ingest_history
+  for file in "$src_dir"/*.json; do
     [[ -e $file ]] || continue
     ingest_file "$file"
   done
@@ -365,8 +393,11 @@ prune() {
   # line, which meant everything after it was missing from `kept` and was then
   # written back over the archive as the new truth. Everything below the bad
   # byte, gone.
-  if ! kept=$(jq -Rc --argjson cutoff "$cutoff" \
-      'fromjson? // empty | select(.timestamp >= $cutoff)' "$archive" 2>/dev/null); then
+  # A toast can close after a newer one was archived. Restore arrival order
+  # before trimming so a late-closing older row cannot evict the newer one.
+  if ! kept=$(jq -Rcn --argjson cutoff "$cutoff" \
+      '[inputs | fromjson? // empty | select(.timestamp >= $cutoff)]
+       | sort_by(.timestamp) | .[]' "$archive" 2>/dev/null); then
     return 0
   fi
   kept=$(printf '%s\n' "$kept" | tail -n "$max_items")
@@ -378,9 +409,17 @@ prune() {
   printf '%s\n' "$kept" | grep -v '^$' > "$archive.tmp" || true
   mv -f "$archive.tmp" "$archive"
 
-  local key
+  # Aggregate rows cannot be removed from the service's read-only history.
+  # Remember dropped keys just like dismissals so a rewrite cannot resurrect
+  # them and evict newer entries on the next retention pass.
+  local key history_keys
+  history_keys=$(jq -r 'if type == "array" then .[] | objects | .key | strings
+                        else empty end' "$history_json" 2>/dev/null) || history_keys=""
   while IFS= read -r key; do
     [[ -n $key ]] || continue
+    if grep -qxF -- "$key" <<< "$history_keys"; then
+      printf '%s\n' "$key" >> "$dismissed_file"
+    fi
     rm -f -- "$images/$key-appIcon" "$images/$key-image" "$images/$key-preview"
     # The source file too. It was the service's copy of something this archive
     # now no longer has, so there is nothing left that would show it again.
@@ -452,10 +491,10 @@ cmd_watch() {
   # rather than watch fail on a missing word later.
   command -v setpriv >/dev/null 2>&1 || die "setpriv is not installed"
 
-  # close_write catches a popup being written, moved_to catches it being
-  # archived. The same notification arrives twice that way and the second one
-  # is dropped by the key check, which is cheaper than trying to be clever
-  # about which of the two events to listen for.
+  # close_write catches a popup being written; moved_to catches it being
+  # archived, and catches atomic rewrites of history.json. The key check keeps
+  # repeated events from appending the same notification twice, which is
+  # cheaper than trying to predict which event will catch a complete file.
   # Read through a descriptor rather than a pipeline, so the watcher is a child
   # of this script rather than of a pipeline that outlives it.
   # `setpriv --pdeathsig TERM` is what ends it. The kernel has the watcher
@@ -475,8 +514,17 @@ cmd_watch() {
 
   while IFS= read -r file <&3; do
     [[ $file == *.json ]] || continue
-    with_lock ingest_one "$file"
+    case ${file##*/} in
+      history.json) with_lock ingest_history_one ;;
+      live.json|quiet.json) continue ;;
+      *) with_lock ingest_one "$file" ;;
+    esac
   done
+}
+
+ingest_history_one() {
+  ingest_history
+  prune
 }
 
 ingest_one() {
@@ -514,7 +562,10 @@ remove_key() {
   # Both directories, not only history: a notification dismissed while its
   # toast is still on screen is sitting in the popup directory, and leaving it
   # there means the move into history archives it again a moment later.
-  rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
+  # These names are aggregate state, even when a caller supplies one as a key.
+  if ! is_service_file "$key.json"; then
+    rm -f -- "$src_history/$key.json" "$src_dir/$key.json"
+  fi
 }
 
 cmd_remove() {

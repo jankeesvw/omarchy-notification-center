@@ -21,9 +21,12 @@ screen, so a bell in the middle is a bell whose panel opens somewhere else.
 
 ## What it does
 
-Omarchy's notification service already writes every notification to disk, and
-then keeps only the last ten. This copies each one out of there as it lands,
-icon and all, and keeps it for 30 days.
+Omarchy's notification service writes notifications to disk. Older builds keep
+only the last ten per-notification files; newer builds keep up to a day and
+100 closed notifications in `history.json`. This reads every history rewrite
+and copies new entries, icon and all, into an archive kept for 30 days. On
+newer builds a notification reaches the center when it closes; `live.json`
+and `quiet.json` are left alone.
 
 - One card per notification, newest first, under the day it arrived on.
 - **A picture** when there was one. Cameras and screenshot tools hand their
@@ -111,8 +114,10 @@ omarchy-shell jankeesvw.notification-center toggle
 
 ## Tests
 
-The Slack matching has unit tests. Run them from the plugin directory with
-`node --test`.
+Run `node --test` from the plugin directory for the JavaScript unit tests and
+the store's CLI tests. The CLI tests use synthetic notifications in scratch
+directories and need `jq`; watcher tests also need `inotifywait` and `setpriv`.
+Tests whose dependencies are missing are skipped.
 
 ## Licence
 
