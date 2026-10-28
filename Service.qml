@@ -39,7 +39,10 @@ Item {
   // omarchy.notifications: a third-party entry is only handed its own service.
   // Read from the state file that service writes back on every change, and set
   // through its IPC target, so a toggle from anywhere else shows up here too.
+  // That file is notifications/quiet.json now; older releases wrote
+  // notifications.json, which is only read when there is no quiet.json.
   readonly property QtObject notifications: dndBridge
+  property bool quietStateLoaded: false
 
   QtObject {
     id: dndBridge
@@ -52,12 +55,28 @@ Item {
   }
 
   FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/notifications.json"
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/notifications/quiet.json"
+    printErrors: false
     watchChanges: true
     onFileChanged: reload()
     onLoaded: {
       try {
         dndBridge.doNotDisturb = JSON.parse(text()).dnd === true
+        root.quietStateLoaded = true
+      } catch (e) {
+      }
+    }
+  }
+
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/notifications.json"
+    printErrors: false
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        if (!root.quietStateLoaded)
+          dndBridge.doNotDisturb = JSON.parse(text()).dnd === true
       } catch (e) {
       }
     }
