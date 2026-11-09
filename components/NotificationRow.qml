@@ -37,6 +37,14 @@ Item {
   property bool showBody: true
   property bool showPreview: true
   property bool unread: false
+  // Set on a collapsed group: the card is its newest notification, drawn with
+  // the edges of the others showing underneath it and the group's name where
+  // the app name would be.
+  property int stackCount: 1
+  property string groupName: ""
+  // A group spans days but sits under the day of its newest member, so an
+  // older one inside it says which day it was from next to its time.
+  property string dayPrefix: ""
 
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
@@ -90,7 +98,8 @@ Item {
     var age = Math.max(0, now - timestamp)
     if (age < 60000) return "now"
     if (age < 3600000) return Math.round(age / 60000) + "m ago"
-    return Qt.formatDateTime(new Date(timestamp), "HH:mm")
+    var clock = Qt.formatDateTime(new Date(timestamp), "HH:mm")
+    return dayPrefix !== "" ? dayPrefix + " " + clock : clock
   }
 
   function resolve(icon) {
@@ -103,9 +112,41 @@ Item {
     return Quickshell.iconPath(value, true)
   }
 
-  implicitHeight: card.implicitHeight
+  // How far the stack shows below the card: one edge for two, two for more.
+  readonly property real stackDepth: stackCount > 2 ? Style.space(8)
+                                   : stackCount > 1 ? Style.space(4) : 0
+
+  implicitHeight: card.implicitHeight + stackDepth
 
   HoverHandler { id: hover }
+
+  // The cards underneath. The card is translucent, so a whole card drawn
+  // behind it would show through; each of these is clipped to the strip below
+  // the card and only its rounded bottom edge is ever drawn.
+  Repeater {
+    model: root.stackCount > 2 ? 2 : root.stackCount > 1 ? 1 : 0
+
+    Item {
+      id: edge
+      required property int index
+      readonly property real inset: Style.space(10) * (index + 1)
+      x: inset
+      y: card.height + Style.space(4) * index
+      width: card.width - inset * 2
+      height: Style.space(4)
+      clip: true
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: radius * 2 + parent.height
+        radius: Style.space(10)
+        color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
+                       edge.index === 0 ? 0.05 : 0.03)
+      }
+    }
+  }
 
   Rectangle {
     id: card
@@ -230,7 +271,9 @@ Item {
           id: appLabel
           anchors.left: parent.left
           width: parent.width - whenLabel.implicitWidth - Style.space(20)
-          text: root.app
+          text: root.groupName !== ""
+            ? root.groupName + "  \u00b7  " + root.stackCount
+            : root.app
           elide: Text.ElideRight
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
