@@ -173,7 +173,11 @@ Item {
 
   Process {
     id: watchProc
-    command: root.storeCommand(["watch"])
+    // The shell stops this when it exits cleanly, but not when it crashes or
+    // is SIGKILLed: watch would then keep running, with its inotifywait,
+    // until a notification made it write to the dead pipe. The kernel ends it
+    // with the shell instead, as watch already does for its inotifywait.
+    command: ["setpriv", "--pdeathsig", "TERM"].concat(root.storeCommand(["watch"]))
     environment: root.storeEnvironment
     running: true
     stdout: SplitParser {
