@@ -37,6 +37,8 @@ Item {
   property bool showBody: true
   property bool showPreview: true
   property bool unread: false
+  // The panel's Commons.Translations, handed down rather than built per row.
+  property var strings: null
 
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
@@ -88,8 +90,11 @@ Item {
   // written above the card.
   readonly property string when: {
     var age = Math.max(0, now - timestamp)
-    if (age < 60000) return "now"
-    if (age < 3600000) return Math.round(age / 60000) + "m ago"
+    if (age < 60000) return strings ? strings.t("row.now") : "now"
+    var minutes = Math.round(age / 60000)
+    if (age < 3600000) return strings
+      ? strings.tn("row.minutesAgo", minutes).arg(Commons.I18n.formatNumber(minutes))
+      : minutes + "m ago"
     return Qt.formatDateTime(new Date(timestamp), "HH:mm")
   }
 
