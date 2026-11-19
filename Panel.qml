@@ -54,6 +54,13 @@ Panel {
   readonly property bool showBody: setting("showBody", true)
   readonly property bool showPreview: setting("showPreview", true)
 
+  // The plugin's own strings, one catalog per Omarchy language under i18n/.
+  // Follows Setup > Language live; a missing string falls back to English.
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
+  readonly property var translations: strings
+  readonly property var dateLocale: Qt.locale(Commons.I18n.formatLocale)
+
   // ------------------------------------------------------------- the service
   //
   // Only for Do Not Disturb, which belongs to whoever is receiving the
@@ -225,6 +232,13 @@ Panel {
 
   onFilterChanged: rebuild()
 
+  // The day headings are written into the rows when they are built, so a
+  // language switch has to build them again.
+  Connections {
+    target: strings
+    function onStringsChanged() { root.rebuild() }
+  }
+
   // The heading a notification is filed under. Days rather than hours, because
   // what you remember about a notification you are hunting for is which day it
   // was, and because a list broken into hours is a list that is mostly
@@ -233,13 +247,14 @@ Panel {
     var when = new Date(timestamp)
     var now = new Date()
     var midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-    if (timestamp >= midnight) return "Today"
-    if (timestamp >= midnight - 86400000) return "Yesterday"
+    if (timestamp >= midnight) return strings.t("day.today")
+    if (timestamp >= midnight - 86400000) return strings.t("day.yesterday")
     // Within the week the weekday is the better handle: "Tuesday" is how you
     // remember it, "17 August" is how you would have to work it out.
-    if (timestamp >= midnight - 6 * 86400000) return Qt.formatDateTime(when, "dddd")
-    if (when.getFullYear() === now.getFullYear()) return Qt.formatDateTime(when, "d MMMM")
-    return Qt.formatDateTime(when, "d MMMM yyyy")
+    if (timestamp >= midnight - 6 * 86400000) return when.toLocaleDateString(root.dateLocale, "dddd")
+    if (when.getFullYear() === now.getFullYear())
+      return when.toLocaleDateString(root.dateLocale, strings.t("day.thisYearFormat"))
+    return when.toLocaleDateString(root.dateLocale, strings.t("day.otherYearFormat"))
   }
 
   // --------------------------------------------------------------- activating
@@ -360,11 +375,11 @@ Panel {
     active: root.badge === "Highlight" && root.unread > 0
     activeColor: Commons.Color.accent
     tooltipText: {
+      var count = Commons.I18n.formatNumber(root.unread)
       if (root.dnd) return root.unread > 0
-        ? "Silenced · " + root.unread + " new" : "Notifications silenced"
-      if (root.unread === 1) return "1 new notification"
-      if (root.unread > 1) return root.unread + " new notifications"
-      return "Notifications"
+        ? strings.tn("bar.silencedUnread", root.unread).arg(count) : strings.t("bar.silenced")
+      if (root.unread > 0) return strings.tn("bar.unread", root.unread).arg(count)
+      return strings.t("bar.idle")
     }
 
     onPressed: function(b) {
@@ -423,7 +438,7 @@ Panel {
       anchors.centerIn: parent
       // Past ninety-nine the number has stopped being information and the
       // badge is only saying "a lot", which it can say in three characters.
-      text: root.unread > 99 ? "99+" : String(root.unread)
+      text: root.unread > 99 ? Commons.I18n.formatNumber(99) + "+" : Commons.I18n.formatNumber(root.unread)
       font.family: root.fontFamily
       font.pixelSize: Math.max(8, Style.font.caption - Style.space(3))
       font.bold: true
@@ -502,7 +517,7 @@ Panel {
             id: title
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "NOTIFICATIONS"
+            text: strings.t("panel.title").toLocaleUpperCase()
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
@@ -526,7 +541,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               // U+F0349, nf-md-magnify.
               iconText: "\uDB80\uDF49"
-              tooltipText: "Search these notifications  ( / )"
+              tooltipText: strings.t("panel.search.tooltip")
               foreground: root.searching ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               visible: root.entries.length > 0
@@ -536,7 +551,7 @@ Panel {
             PanelActionButton {
               anchors.verticalCenter: parent.verticalCenter
               iconText: root.dnd ? "\uDB80\uDC9B" : "\uDB80\uDC9A"
-              tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
+              tooltipText: root.dnd ? strings.t("panel.dnd.allow") : strings.t("panel.dnd.silence")
               foreground: root.dnd ? Commons.Color.accent : root.foreground
               fontFamily: root.fontFamily
               enabled: root.notificationService !== null
@@ -548,8 +563,8 @@ Panel {
             // broom is not the place to find out which is which.
             Button {
               anchors.verticalCenter: parent.verticalCenter
-              text: "Clear"
-              tooltipText: "Empty the panel"
+              text: strings.t("panel.clear")
+              tooltipText: strings.t("panel.clear.tooltip")
               foreground: root.foreground
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
@@ -565,7 +580,7 @@ Panel {
           id: search
           width: parent.width
           visible: root.searching
-          placeholderText: "Search"
+          placeholderText: strings.t("panel.search.placeholder")
           foreground: root.foreground
           onTextChanged: root.filter = text
           Keys.onEscapePressed: root.endSearch()
@@ -624,7 +639,7 @@ Panel {
               anchors.leftMargin: Style.space(2)
               anchors.bottom: parent.bottom
               anchors.bottomMargin: Style.space(4)
-              text: daySection.section.toUpperCase()
+              text: daySection.section.toLocaleUpperCase()
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
@@ -650,6 +665,7 @@ Panel {
             showPreview: root.showPreview
             foreground: root.foreground
             fontFamily: root.fontFamily
+            strings: root.translations
 
             onClicked: root.activate(row.model)
             onRemoveRequested: root.remove(row.model.key)
@@ -665,9 +681,9 @@ Panel {
           horizontalAlignment: Text.AlignHCenter
           topPadding: Style.space(22)
           bottomPadding: Style.space(22)
-          text: !root.loaded ? "Reading the archive\u2026"
-              : root.filter !== "" ? "Nothing matches \u201c" + root.filter + "\u201d"
-              : "Nothing has come in yet"
+          text: !root.loaded ? strings.t("panel.loading")
+              : root.filter !== "" ? strings.t("panel.noMatches").arg(root.filter)
+              : strings.t("panel.empty")
           wrapMode: Text.WordWrap
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -685,8 +701,10 @@ Panel {
           horizontalAlignment: Text.AlignHCenter
           topPadding: Style.space(2)
           text: root.entries.length === 1
-            ? "1 notification kept"
-            : root.entries.length + " notifications kept \u00b7 " + root.keepDays + " days"
+            ? strings.t("panel.footer.one")
+            : strings.tn("panel.footer", root.entries.length)
+                .arg(Commons.I18n.formatNumber(root.entries.length))
+                .arg(strings.tn("panel.footer.days", root.keepDays).arg(Commons.I18n.formatNumber(root.keepDays)))
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           color: root.foreground
