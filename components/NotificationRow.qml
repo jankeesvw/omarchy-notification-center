@@ -46,6 +46,27 @@ Item {
   signal clicked()
   signal removeRequested()
 
+  // Set for a second after the copy button is pressed, so the icon can show a
+  // tick and you know the click landed.
+  property bool copied: false
+
+  // Plain text only: the same tag-stripped strings the card shows, never the
+  // raw markup the sender supplied.
+  function copyText() {
+    var text = cleanSummary
+    if (cleanBody !== "") text = text === "" ? cleanBody : text + "\n" + cleanBody
+    if (text === "") return
+    Quickshell.execDetached(["wl-copy", "--", text])
+    copied = true
+    copiedTimer.restart()
+  }
+
+  Timer {
+    id: copiedTimer
+    interval: 1000
+    onTriggered: root.copied = false
+  }
+
   readonly property bool hovered: hover.hovered
   // Per-notification media first (an avatar, album art), then the web app the
   // notification came from, then the app's own icon. The web app goes ahead of
@@ -234,7 +255,7 @@ Item {
           textFormat: Text.PlainText
           id: appLabel
           anchors.left: parent.left
-          width: parent.width - whenLabel.implicitWidth - Style.space(20)
+          width: parent.width - Math.max(whenLabel.implicitWidth, root.hovered ? Style.space(38) : 0) - Style.space(20)
           text: root.app
           elide: Text.ElideRight
           font.family: root.fontFamily
@@ -243,8 +264,9 @@ Item {
           opacity: 0.5
         }
 
-        // Swapped for the dismiss button while the pointer is over the card.
-        // They never coexist, so neither has to make room for the other, and
+        // Swapped for the copy and dismiss buttons while the pointer is over
+        // the card. They never coexist, so the app name only makes room for
+        // whichever is wider, and
         // the corner stays quiet until you reach for it.
         Text {
           textFormat: Text.PlainText
@@ -256,6 +278,43 @@ Item {
           font.pixelSize: Style.font.caption
           color: root.foreground
           opacity: 0.45
+        }
+
+        // Copy sits just left of dismiss and shares its shape and hover rule,
+        // so the corner still reads as one quiet cluster of controls.
+        Rectangle {
+          id: copyButton
+          anchors.right: dismiss.left
+          // Wider than the two click areas reach past their circles (2 + 3),
+          // so a click between them never lands on dismiss.
+          anchors.rightMargin: Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.hovered
+          width: Style.space(16)
+          height: width
+          radius: width / 2
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
+                         copyMouse.containsMouse ? 0.25 : 0.15)
+
+          Text {
+            textFormat: Text.PlainText
+            anchors.centerIn: parent
+            // Nerd Font content-copy, swapped for a check mark once copied.
+            text: root.copied ? "\uDB80\uDD2C" : "\uDB80\uDD8F"
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            color: root.foreground
+            opacity: 0.8
+          }
+
+          MouseArea {
+            id: copyMouse
+            anchors.fill: parent
+            anchors.margins: -Style.space(2)
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.copyText()
+          }
         }
 
         Rectangle {
